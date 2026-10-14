@@ -1,0 +1,38 @@
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Node / Next
+node_modules/
+.next/
+out/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local storage / cache
+.cache/
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Playwright / browser binaries
+ms-playwright/

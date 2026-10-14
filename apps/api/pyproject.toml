@@ -1,0 +1,55 @@
+[project]
+name = "jobpilot-api"
+version = "0.1.0"
+description = "JobPilot FastAPI backend"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi",
+  "uvicorn[standard]",
+  "pydantic",
+  "pydantic-settings",
+  "python-multipart",
+  "httpx",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "pytest-asyncio",
+  "ruff",
+]
+cv = [
+  "pymupdf",
+  "pdfplumber",
+  "python-docx",
+  "pytesseract",
+]
+discovery = [
+  "trafilatura",
+  "extruct",
+  "selectolax",
+  "beautifulsoup4",
+  "playwright",
+  "tavily-python",
+]
+matching = [
+  "sentence-transformers",
+  "chromadb",
+  "numpy",
+]
+providers = [
+  "mistralai",
+  "google-generativeai",
+  "groq",
+  "openai",
+]
+ollama = [
+  # Ollama uses the OpenAI-compatible local API; only httpx required.
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
