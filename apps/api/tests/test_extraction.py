@@ -21,9 +21,32 @@ async def test_jsonld_extraction_saved_real_fixture():
 
 async def test_jsonld_extraction_minimal_fixture():
     html = Path("tests/fixtures/job_jsonld.html").read_text()
-    jobs = await extract_jobs(html, "https://example.com/job/1")
+    url = "https://example.com/job/1"
+    jobs = await extract_jobs(html, url)
     assert len(jobs) == 1
-    assert jobs[0].title == "Backend Engineer"
-    assert jobs[0].company == "Acme"
-    assert jobs[0].country == "DE"
-    assert jobs[0].work_mode == "remote"
+    job = jobs[0]
+    assert job.title == "Senior Backend Engineer"
+    assert job.company == "Acme"
+    assert job.country == "DE"
+    assert job.location == "Berlin, DE"
+    assert job.work_mode == "remote"
+    assert job.employment_type == "full_time"
+    assert job.remote_eligibility == "US"
+    assert job.seniority == "Senior"
+    assert job.url == url
+    assert job.original_url == url
+
+
+async def test_unmeaningful_page_returns_no_llm_call():
+    class Provider:
+        def __init__(self):
+            self.calls = 0
+
+        async def complete(self, prompt, system=None):
+            self.calls += 1
+            return "[]"
+
+    provider = Provider()
+    jobs = await extract_jobs("<html><body></body></html>", "https://example.com/job/2", provider)
+    assert jobs == []
+    assert provider.calls == 0

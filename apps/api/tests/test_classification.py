@@ -30,6 +30,16 @@ async def test_other_page():
     assert await classify_page(html, "https://example.com/about/policy") == "other"
 
 
+async def test_listing_url_beats_generic_apply_text():
+    html = Path("tests/fixtures/classification_single.html").read_text()
+    assert await classify_page(html, "https://arc.dev/remote-jobs/full-stack") == "listing"
+
+
+async def test_specific_job_url_is_single():
+    html = Path("tests/fixtures/classification_single.html").read_text()
+    assert await classify_page(html, "https://example.com/jobs/123456") == "single_job"
+
+
 async def test_provider_tie_breaker():
     class Provider:
         async def complete(self, prompt, system=None):

@@ -6,7 +6,11 @@ from urllib.parse import urldefrag, urljoin, urlparse
 from app.extraction.extractor import _from_jsonld
 
 _LISTING_URL_RE = re.compile(
-    r"/(?:jobs?|careers?|search|remote-jobs|openings?|categories|role|locations?)(?:/|$|#|\?)",
+    r"/(?:careers?|search)(?:/|$|#|\?)"
+    r"|/(?:jobs?|remote-jobs|openings?)(?:/|$|#|\?)"
+    r"|/(?:jobs?|remote-jobs|openings?)/(?:[^/]+/)?[^/]+/?$"
+    r"|/categories/[^/]+/?$"
+    r"|[?#](?:q|query|page|search|category|location|sort)=",
     re.IGNORECASE,
 )
 _SINGLE_URL_RE = re.compile(
@@ -86,10 +90,12 @@ async def classify_page(html: str, url: str, provider=None) -> str:
     single_url = _url_is_single_job(url)
     listing_url = _url_is_listing(url)
 
-    if (embedded or single_url or _looks_single_from_page_structure(html)) and len(links) < 5:
+    if embedded or single_url:
         return "single_job"
     if listing_url or len(links) >= 5:
         return "listing"
+    if _looks_single_from_page_structure(html):
+        return "single_job"
 
     if provider is not None:
         prompt = (

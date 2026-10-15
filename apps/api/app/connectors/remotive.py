@@ -11,6 +11,7 @@ import httpx
 
 from app.connectors.prefilter import matches_role
 from app.core.models import Job
+from app.extraction.extractor import _extract_seniority
 
 DAILY_LIMIT = int(os.getenv("REMOTIVE_DAILY_LIMIT", "4"))
 MIN_INTERVAL_SECONDS = int(os.getenv("REMOTIVE_MIN_INTERVAL_SECONDS", "30"))
@@ -109,10 +110,14 @@ async def fetch_jobs(
                 title=title,
                 company=item.get("company_name", ""),
                 url=item.get("url", ""),
+                original_url=item.get("url", ""),
                 source="remotive.com",
                 posted_date=posted,
                 work_mode="remote",
                 employment_type=item.get("job_type"),
+                location=item.get("candidate_required_location"),
+                remote_eligibility=item.get("candidate_required_location"),
+                seniority=_extract_seniority(title),
                 country=None,
                 page_text=item.get("description", ""),
             )

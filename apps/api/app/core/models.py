@@ -73,7 +73,14 @@ class Job(BaseModel):
     posted_date: date | None = None
     work_mode: str | None = None
     employment_type: str | None = None
+    location: str | None = None
     country: str | None = None
+    remote_eligibility: str | None = None
+    seniority: str | None = None
+    original_url: str | None = None
+    url_verified: bool = False
+    url_verification_status: str | None = None
+    freshness_status: str | None = None
     page_text: str = ""
 
 

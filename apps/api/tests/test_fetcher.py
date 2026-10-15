@@ -107,6 +107,7 @@ def test_http_status_outcome(monkeypatch, tmp_path):
     result = asyncio.run(fetcher.fetch_detailed("https://example.com/missing", cache_dir=str(tmp_path)))
     assert result.status == "http_404"
     assert result.status_code == 404
+    assert result.final_url == "https://example.com/missing"
 
 
 def test_timeout_outcome(monkeypatch, tmp_path):

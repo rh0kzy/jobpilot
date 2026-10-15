@@ -1,64 +1,68 @@
-"""Job normalization and deduplication."""
+"""Job normalization, deduplication and freshness marking."""
 
-import re
+from datetime import date, timedelta
 
 from app.core.models import Job
 
 
-def _norm_work_mode(value: str | None, text: str) -> str:
-    haystack = f"{value or ''} {text or ''}".lower()
-    if "hybrid" in haystack or "télétravail partiel" in haystack:
-        return "hybrid"
-    if (
-        "remote" in haystack
-        or "telecommute" in haystack
-        or "work from home" in haystack
-        or "à distance" in haystack
-        or "a distance" in haystack
-    ):
-        return "remote"
-    if "on-site" in haystack or "onsite" in haystack or "on site" in haystack or "présence" in haystack:
-        return "onsite"
-    v = (value or "").strip().lower()
-    if v in {"remote", "hybrid", "onsite"}:
-        return v
-    return "unspecified"
+def _norm_enum(value: str | None, allowed: set[str]) -> str | None:
+    if value is None or str(value).strip() == "":
+        return None
+    v = str(value).strip().lower()
+    aliases = {
+        "full time": "full_time",
+        "full-time": "full_time",
+        "part time": "part_time",
+        "part-time": "part_time",
+        "on-site": "onsite",
+    }
+    v = aliases.get(v, v)
+    return v if v in allowed else None
 
 
-def _contains(haystack: str, terms: tuple[str, ...]) -> bool:
-    return any(re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", haystack) for term in terms)
-
-
-def _norm_employment(value: str | None, text: str) -> str:
-    haystack = f"{value or ''} {text or ''}".lower()
-    if _contains(haystack, ("internship", "intern", "stage", "apprenticeship")):
-        return "internship"
-    if _contains(haystack, ("part time", "part-time", "mi-temps", "temps partiel")):
-        return "part_time"
-    if _contains(haystack, ("contract", "contrat", "freelance", "independent contractor", "temporary")):
-        return "contract"
-    if _contains(haystack, ("full time", "full-time", "cdi", "temps plein", "permanent")):
-        return "full_time"
-    return "unspecified"
-
-
-def _norm_country(value: str | None) -> str:
-    return (value or "").strip().upper() or "unspecified"
+def _norm_country(value: str | None) -> str | None:
+    country = (value or "").strip().upper()
+    return country or None
 
 
 def normalize_job(job: Job) -> Job:
-    title = (job.title or "").strip()
-    company = (job.company or "").strip()
-    text = f"{title} {job.page_text or ''}"
+    work_mode = _norm_enum(job.work_mode, {"remote", "hybrid", "onsite"})
+    employment_type = _norm_enum(
+        job.employment_type,
+        {"full_time", "part_time", "contract", "internship"},
+    )
     return job.model_copy(
         update={
-            "title": title,
-            "company": company,
-            "work_mode": _norm_work_mode(job.work_mode, text),
-            "employment_type": _norm_employment(job.employment_type, text),
+            "title": (job.title or "").strip(),
+            "company": (job.company or "").strip(),
+            "work_mode": work_mode,
+            "employment_type": employment_type,
+            "location": (job.location or "").strip() or None,
+            "remote_eligibility": (job.remote_eligibility or "").strip() or None,
+            "seniority": (job.seniority or "").strip() or None,
             "country": _norm_country(job.country),
         }
     )
+
+
+def mark_freshness(
+    jobs: list[Job],
+    max_age_days: int = 60,
+    today: date | None = None,
+) -> list[Job]:
+    """Flag freshness without dropping stale/unknown jobs."""
+    today = today or date.today()
+    cutoff = today - timedelta(days=max_age_days)
+    marked: list[Job] = []
+    for job in jobs:
+        if job.posted_date is None:
+            status = "unknown"
+        elif job.posted_date < cutoff:
+            status = "stale"
+        else:
+            status = "current"
+        marked.append(job.model_copy(update={"freshness_status": status}))
+    return marked
 
 
 def dedupe(jobs: list[Job]) -> list[Job]:

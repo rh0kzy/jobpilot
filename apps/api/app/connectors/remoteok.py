@@ -6,6 +6,7 @@ import httpx
 
 from app.connectors.prefilter import matches_role
 from app.core.models import Job
+from app.extraction.extractor import _extract_seniority
 
 
 async def fetch_jobs(
@@ -44,9 +45,14 @@ async def fetch_jobs(
                 title=title,
                 company=item.get("company", ""),
                 url=item.get("url", ""),
+                original_url=item.get("url", ""),
                 source="remoteok.com",
                 posted_date=posted,
                 work_mode="remote",
+                employment_type=None,
+                location=item.get("location"),
+                remote_eligibility=item.get("location"),
+                seniority=_extract_seniority(title),
                 country=None,
                 page_text=item.get("description", ""),
             )

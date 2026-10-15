@@ -10,6 +10,15 @@ import httpx
 from app.connectors.prefilter import matches_role
 from app.core.models import Job
 from app.extraction.classification import _url_is_single_job
+from app.extraction.extractor import _extract_remote_eligibility, _extract_seniority
+
+
+def _location_name(value) -> str | None:
+    if isinstance(value, dict):
+        value = value.get("name")
+    if value is None:
+        return None
+    return str(value).strip() or None
 
 _BOARDS_FILE = Path(__file__).with_name("greenhouse_boards.txt")
 _BASE_URL = "https://boards-api.greenhouse.io/v1/boards"
@@ -56,19 +65,26 @@ async def fetch_jobs(
                 except Exception:  # noqa: BLE001
                     posted = None
                 text = re.sub(r"<[^>]+>", " ", item.get("content", "") or "")
-                url = item.get("absolute_url", "")
+                location = _location_name(item.get("location"))
+                company_domain = item.get("absolute_url", "")
                 job_id = item.get("id")
-                if not url or (job_id and not _url_is_single_job(url)):
-                    url = f"https://boards.greenhouse.io/{token}/jobs/{job_id}"
+                canonical_url = f"https://boards.greenhouse.io/{token}/jobs/{job_id}"
+                url = company_domain if _url_is_single_job(company_domain) else canonical_url
                 jobs.append(
                     Job(
                         title=title,
-                        company=_company_from_token(token),
+                        company=item.get("company_name") or _company_from_token(token),
                         url=url,
+                        original_url=company_domain if company_domain != url else None,
                         source=f"greenhouse.io/{token}",
                         posted_date=posted,
                         work_mode=None,
                         employment_type=None,
+                        location=location,
+                        remote_eligibility=_extract_remote_eligibility(
+                            {"title": title, "description": text}
+                        ),
+                        seniority=_extract_seniority(title),
                         country=None,
                         page_text=text,
                     )

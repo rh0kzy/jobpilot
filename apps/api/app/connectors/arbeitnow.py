@@ -6,6 +6,7 @@ import httpx
 
 from app.connectors.prefilter import matches_role
 from app.core.models import Job
+from app.extraction.extractor import _extract_seniority
 
 
 def _as_date(created: object) -> object:
@@ -46,9 +47,16 @@ async def fetch_jobs(
                 title=title,
                 company=item.get("company_name", ""),
                 url=item.get("url", ""),
+                original_url=item.get("url", ""),
                 source="arbeitnow.com",
                 posted_date=posted,
                 work_mode="remote" if item.get("remote") else None,
+                employment_type=(item.get("job_types") or [None])[0]
+                if isinstance(item.get("job_types"), list)
+                else item.get("job_types"),
+                location=item.get("location"),
+                remote_eligibility=item.get("location") if item.get("remote") else None,
+                seniority=_extract_seniority(title),
                 country=None,
                 page_text=item.get("description", ""),
             )
