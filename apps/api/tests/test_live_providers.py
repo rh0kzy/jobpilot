@@ -21,5 +21,5 @@ async def test_gemini_live():
 async def test_mistral_live():
     from app.providers.mistral import MistralProvider
 
-    p = MistralProvider(model=os.getenv("AI_MODEL", "mistral-small-latest"), api_key=os.getenv("MISTRAL_API_KEY"))
+    p = MistralProvider(model=os.getenv("AI_MODEL", "codestral-2508"), api_key=os.getenv("MISTRAL_API_KEY"))
     assert "PONG" in (await p.complete("Reply with exactly PONG")).upper()
