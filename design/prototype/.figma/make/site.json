@@ -1,0 +1,10 @@
+{
+  "description": "Enables job seekers to upload a CV, set preferences, and receive AI-ranked job listings from the web with privacy-focused, self-hosted control.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
