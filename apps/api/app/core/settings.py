@@ -7,7 +7,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     ai_provider: str = Field(default="gemini", alias="AI_PROVIDER")
-    ai_model: str = Field(default="gemini-2.0-flash", alias="AI_MODEL")
+    ai_model: str = Field(default="gemini-3.1-flash-lite", alias="AI_MODEL")
     mistral_api_key: str | None = Field(default=None, alias="MISTRAL_API_KEY")
     gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
     groq_api_key: str | None = Field(default=None, alias="GROQ_API_KEY")

@@ -13,7 +13,7 @@ def _live_enabled() -> bool:
 async def test_gemini_live():
     from app.providers.gemini import GeminiProvider
 
-    p = GeminiProvider(model=os.getenv("AI_MODEL", "gemini-2.0-flash"), api_key=os.getenv("GEMINI_API_KEY"))
+    p = GeminiProvider(model=os.getenv("AI_MODEL", "gemini-3.1-flash-lite"), api_key=os.getenv("GEMINI_API_KEY"))
     assert "PONG" in (await p.complete("Reply with exactly PONG")).upper()
 
 

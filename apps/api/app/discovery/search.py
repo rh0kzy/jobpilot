@@ -3,7 +3,7 @@
 import httpx
 
 from app.core import settings as runtime_settings
-from app.core.settings_store import load_saved, resolve_search_key
+from app.core.settings_store import load_saved
 
 
 class SearchProvider:
@@ -52,7 +52,7 @@ def get_search_provider() -> SearchProvider:
     settings = runtime_settings.get_settings()
     saved = load_saved()
     provider = (saved.search_provider or settings.search_provider).lower()
-    key = resolve_search_key(settings, saved.search_provider, saved.search_api_key)
+    key = runtime_settings.resolve_search_key(settings, saved.search_provider, saved.search_api_key)
     if provider == "tavily":
         if not key:
             raise ValueError("Tavily API key missing")
