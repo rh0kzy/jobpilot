@@ -1,12 +1,16 @@
 import asyncio
+from urllib.parse import urlparse
+
+import httpx
 
 from app.discovery import fetcher
 
 
 class FakeResponse:
-    def __init__(self, status, text):
+    def __init__(self, status, text, url):
         self.status_code = status
         self.text = text
+        self.url = url
 
     def raise_for_status(self):
         if self.status_code >= 400:
@@ -38,49 +42,48 @@ def make_client_factory(get_map, bucket):
     return factory
 
 
-def test_blocklist(monkeypatch):
+def _reset():
     fetcher._last_request.clear()
     fetcher._locks.clear()
+
+
+def test_blocklist(monkeypatch):
+    _reset()
     monkeypatch.setattr(fetcher.httpx, "AsyncClient", lambda *a, **k: None)
     assert asyncio.run(fetcher.fetch("https://www.linkedin.com/jobs/1")) is None
 
 
 def test_robots_denied(monkeypatch, tmp_path):
-    fetcher._last_request.clear()
-    fetcher._locks.clear()
+    _reset()
 
     def get_map(url):
         if url.endswith("/robots.txt"):
-            return FakeResponse(200, "User-agent: *\nDisallow: /")
-        return FakeResponse(200, "job page")
+            return FakeResponse(200, "User-agent: *\nDisallow: /", url)
+        return FakeResponse(200, "job page", url)
 
-    bucket = {}
-    monkeypatch.setattr(fetcher.httpx, "AsyncClient", make_client_factory(get_map, bucket))
-
-    result = asyncio.run(fetcher.fetch("https://example.com/job/1", cache_dir=str(tmp_path)))
-    assert result is None
+    monkeypatch.setattr(fetcher.httpx, "AsyncClient", make_client_factory(get_map, {}))
+    result = asyncio.run(fetcher.fetch_detailed("https://example.com/job/1", cache_dir=str(tmp_path)))
+    assert result.status == "blocked_by_robots"
+    assert result.html is None
 
 
 def test_cache_and_fetch(monkeypatch, tmp_path):
-    fetcher._last_request.clear()
-    fetcher._locks.clear()
+    _reset()
 
     def get_map(url):
         if url.endswith("/robots.txt"):
-            return FakeResponse(200, "User-agent: *\nAllow: /")
-        return FakeResponse(200, "<html>job body</html>")
+            return FakeResponse(200, "User-agent: *\nAllow: /", url)
+        return FakeResponse(200, "<html>job body</html>", url)
 
     calls = {"count": 0}
 
     class CountingClient(FakeClient):
         async def get(self, url, *args, **kwargs):
             calls["count"] += 1
-            if url.endswith("/robots.txt"):
-                return FakeResponse(200, "User-agent: *\nAllow: /")
-            return FakeResponse(200, "<html>job body</html>")
+            return get_map(url)
 
     def factory(*a, **k):
-        return CountingClient({})
+        return CountingClient(get_map)
 
     monkeypatch.setattr(fetcher.httpx, "AsyncClient", factory)
 
@@ -90,3 +93,53 @@ def test_cache_and_fetch(monkeypatch, tmp_path):
     assert second == first
     # robots + page on first call only
     assert calls["count"] == 2
+
+
+def test_http_status_outcome(monkeypatch, tmp_path):
+    _reset()
+
+    def get_map(url):
+        if url.endswith("/robots.txt"):
+            return FakeResponse(200, "User-agent: *\nAllow: /", url)
+        return FakeResponse(404, "not found", url)
+
+    monkeypatch.setattr(fetcher.httpx, "AsyncClient", make_client_factory(get_map, {}))
+    result = asyncio.run(fetcher.fetch_detailed("https://example.com/missing", cache_dir=str(tmp_path)))
+    assert result.status == "http_404"
+    assert result.status_code == 404
+
+
+def test_timeout_outcome(monkeypatch, tmp_path):
+    _reset()
+
+    def get_map(url):
+        if url.endswith("/robots.txt"):
+            return FakeResponse(200, "User-agent: *\nAllow: /", url)
+        raise httpx.TimeoutException("Timed out", request=None)
+
+    def factory(*args, **kwargs):
+        return FakeClient(get_map)
+
+    monkeypatch.setattr(fetcher.httpx, "AsyncClient", factory)
+    result = asyncio.run(fetcher.fetch_detailed("https://example.com/slow", cache_dir=str(tmp_path)))
+    assert result.status == "timeout"
+
+
+def test_network_error_outcome(monkeypatch, tmp_path):
+    _reset()
+
+    request = httpx.Request("GET", "https://example.com/network")
+    error = httpx.ConnectError("boom", request=request)
+
+    def get_map(url):
+        if url.endswith("/robots.txt"):
+            return FakeResponse(200, "User-agent: *\nAllow: /", url)
+        raise error
+
+    def factory(*args, **kwargs):
+        return FakeClient(get_map)
+
+    monkeypatch.setattr(fetcher.httpx, "AsyncClient", factory)
+    result = asyncio.run(fetcher.fetch_detailed("https://example.com/network", cache_dir=str(tmp_path)))
+    assert result.status == "network_error"
+    assert urlparse("https://example.com/network").netloc

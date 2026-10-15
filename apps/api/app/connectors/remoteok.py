@@ -4,18 +4,33 @@ from datetime import date
 
 import httpx
 
+from app.connectors.prefilter import matches_role
 from app.core.models import Job
 
 
-async def fetch_jobs(limit: int = 50) -> list[Job]:
+async def fetch_jobs(
+    limit: int = 50,
+    target_roles: list[str] | None = None,
+    tag: str | None = None,
+) -> list[Job]:
     url = "https://remoteok.com/api"
-    async with httpx.AsyncClient(timeout=30, headers={"User-Agent": "JobPilot"}) as client:
-        resp = await client.get(url)
-    resp.raise_for_status()
-    data = resp.json()
+    params = {"tag": tag} if tag else None
+    async with httpx.AsyncClient(
+        timeout=30,
+        headers={"User-Agent": "JobPilot"},
+        follow_redirects=True,
+    ) as client:
+        response = await client.get(url, params=params)
+    response.raise_for_status()
+    data = response.json()
+
     jobs = []
     for item in data[1:] if isinstance(data, list) else []:
         if not isinstance(item, dict):
+            continue
+        title = item.get("position", "")
+        tags = item.get("tags") or []
+        if not matches_role(title, tags, target_roles):
             continue
         if len(jobs) >= limit:
             break
@@ -26,7 +41,7 @@ async def fetch_jobs(limit: int = 50) -> list[Job]:
             posted = None
         jobs.append(
             Job(
-                title=item.get("position", ""),
+                title=title,
                 company=item.get("company", ""),
                 url=item.get("url", ""),
                 source="remoteok.com",

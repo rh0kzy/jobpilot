@@ -19,6 +19,14 @@ class EmploymentType(str, Enum):
     internship = "internship"
 
 
+class Education(BaseModel):
+    degree: str | None = None
+    field: str | None = None
+    institution: str | None = None
+    start_year: int | None = None
+    end_year: int | None = None
+
+
 class Profile(BaseModel):
     raw_text: str = ""
     name: str | None = None
@@ -27,7 +35,7 @@ class Profile(BaseModel):
     years_experience: float | None = None
     seniority: str | None = None
     languages: list[str] = Field(default_factory=list)
-    education: list[str] = Field(default_factory=list)
+    education: list[Education] = Field(default_factory=list)
     location: str | None = None
 
 
@@ -35,6 +43,7 @@ class Preferences(BaseModel):
     work_modes: list[WorkMode] = Field(default_factory=list)
     employment_types: list[EmploymentType] = Field(default_factory=list)
     countries: list[str] = Field(default_factory=list)
+    seniority_override: str | None = None
 
     @field_validator("countries", mode="before")
     @classmethod

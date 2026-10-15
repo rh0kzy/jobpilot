@@ -10,6 +10,7 @@ dependencies = [
   "pydantic-settings",
   "python-multipart",
   "httpx",
+  "extruct",
 ]
 
 [project.optional-dependencies]
@@ -26,7 +27,6 @@ cv = [
 ]
 discovery = [
   "trafilatura",
-  "extruct",
   "selectolax",
   "beautifulsoup4",
   "playwright",

@@ -116,13 +116,16 @@ async def extract_jobs(html: str, url: str, provider=None) -> list[Job]:
     jobs = _from_jsonld(html, url)
     if jobs:
         return jobs
-    # LLM fallback
+    # LLM fallback. Only used after the caller has classified the page as a
+    # single job; prompts must fail closed for listing/category pages.
     if provider is not None:
         prompt = (
-            "Extract job postings from the following page text. "
+            "Extract at most one job posting from the following page text. "
+            "If this page is not one specific job posting (for example a search, category, careers or listing page), "
+            "return an empty JSON array []. "
             "Return ONLY a JSON array of objects with keys: title, company, url, posted_date (YYYY-MM-DD or null), "
             "work_mode, employment_type, country, description. "
-            "Copy fields only; do not invent. Use the given URL for url.\n\n"
+            "Copy fields only from the page; do not invent. Use the given URL for url.\n\n"
             f"URL: {url}\n\nTEXT:\n{html[:6000]}"
         )
         try:
@@ -152,11 +155,6 @@ async def extract_jobs(html: str, url: str, provider=None) -> list[Job]:
                     return jobs
         except Exception:  # noqa: BLE001, S110
             pass
-    # HTML heuristic: minimal title from <title>
-    m = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
-    title = m.group(1).strip() if m else None
-    if title and len(title) < 120:
-        jobs.append(Job(title=title, company="", url=url, source=_domain(url), page_text=html[:2000]))
     return jobs
 
 

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import httpx
 
+from app.connectors.prefilter import matches_role
 from app.core.models import Job
 
 DAILY_LIMIT = int(os.getenv("REMOTIVE_DAILY_LIMIT", "4"))
@@ -58,8 +59,12 @@ def _should_refresh(meta: dict | None, now: float, jobs_cache: list[Job] | None)
     return (now - float(fetched_at)) >= CACHE_TTL_SECONDS
 
 
-async def fetch_jobs(limit: int = 50, cache_dir: str | None = None) -> list[Job]:
-    cache_dir = cache_dir or _cache_dir()
+async def fetch_jobs(
+    limit: int = 50,
+    target_roles: list[str] | None = None,
+    category: str | None = "software-dev",
+) -> list[Job]:
+    cache_dir = _cache_dir()
     jobs_path, meta_path = _paths(cache_dir)
     now = time.time()
     today = datetime.now().date().isoformat()
@@ -79,10 +84,15 @@ async def fetch_jobs(limit: int = 50, cache_dir: str | None = None) -> list[Job]
         await asyncio.sleep(MIN_INTERVAL_SECONDS - (now - float(last_fetch)))
 
     url = "https://remotive.com/api/remote-jobs"
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(url)
-    resp.raise_for_status()
-    data = resp.json()
+    params = {"category": category} if category else None
+    async with httpx.AsyncClient(
+        timeout=30,
+        headers={"User-Agent": "JobPilot"},
+        follow_redirects=True,
+    ) as client:
+        response = await client.get(url, params=params)
+    response.raise_for_status()
+    data = response.json()
 
     jobs = []
     for item in data.get("jobs", [])[:limit]:
@@ -91,15 +101,19 @@ async def fetch_jobs(limit: int = 50, cache_dir: str | None = None) -> list[Job]
             posted = date.fromisoformat(pub[:10]) if pub else None
         except Exception:  # noqa: BLE001
             posted = None
+        title = item.get("title", "")
+        if not matches_role(title, item.get("tags"), target_roles):
+            continue
         jobs.append(
             Job(
-                title=item.get("title", ""),
+                title=title,
                 company=item.get("company_name", ""),
                 url=item.get("url", ""),
                 source="remotive.com",
                 posted_date=posted,
                 work_mode="remote",
                 employment_type=item.get("job_type"),
+                country=None,
                 page_text=item.get("description", ""),
             )
         )
@@ -120,10 +134,8 @@ async def fetch_jobs(limit: int = 50, cache_dir: str | None = None) -> list[Job]
         encoding="utf-8",
     )
     try:
-        import os as _os
-
-        _os.chmod(jobs_path, 0o600)
-        _os.chmod(meta_path, 0o600)
+        os.chmod(jobs_path, 0o600)
+        os.chmod(meta_path, 0o600)
     except OSError:
         pass
     return jobs
