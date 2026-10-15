@@ -21,6 +21,8 @@ class Settings(BaseSettings):
 
     settings_writable: bool = Field(default=True, alias="SETTINGS_WRITABLE")
     web_origin: str = Field(default="http://localhost:3000", alias="WEB_ORIGIN")
+    allowed_hosts: str = Field(default="localhost,127.0.0.1", alias="JOBPILOT_ALLOWED_HOSTS")
+    local_settings_token: str | None = Field(default=None, alias="JOBPILOT_SETTINGS_TOKEN")
     cache_dir: str = Field(default="./.cache", alias="CACHE_DIR")
     cache_refresh_hours: int = Field(default=24, alias="CACHE_REFRESH_INTERVAL_HOURS")
     request_timeout: int = Field(default=30, alias="REQUEST_TIMEOUT_SECONDS")

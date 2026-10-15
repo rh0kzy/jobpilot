@@ -14,8 +14,10 @@ def extract_text(path: Path) -> str:
 
 def _extract_pdf(path: Path) -> str:
     try:
-        import fitz  # PyMuPDF
-
+        try:
+            import pymupdf as fitz  # PyMuPDF
+        except ImportError:  # pragma: no cover
+            import fitz  # type: ignore
         doc = fitz.open(str(path))
         return "\n".join(page.get_text() for page in doc)
     except Exception:  # noqa: BLE001, S110

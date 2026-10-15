@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 from urllib.robotparser import RobotFileParser
@@ -47,14 +48,12 @@ async def fetch(url: str, cache_dir: str = "./.cache", timeout: int = 30) -> str
     # per-domain rate limit
     lock = _locks.setdefault(domain, asyncio.Lock())
     async with lock:
-        import time
-
         now = time.monotonic()
         if domain in _last_request and now - _last_request[domain] < 1.0:
             await asyncio.sleep(1.0 - (now - _last_request[domain]))
         async with httpx.AsyncClient(timeout=timeout, headers={"User-Agent": "JobPilot"}) as client:
             resp = await client.get(url)
-        _last_request[domain] = __import__("time").monotonic()
+        _last_request[domain] = time.monotonic()
         if resp.status_code >= 400:
             return None
         html = resp.text

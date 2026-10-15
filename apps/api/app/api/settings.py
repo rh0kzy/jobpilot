@@ -1,18 +1,38 @@
 """Writable local settings endpoints."""
 
 
-from fastapi import APIRouter, HTTPException
+import secrets
+
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from app.core import settings as runtime_settings
 from app.core.settings_store import (
+    get_settings_token,
     load_saved,
     mask_key,
     save_saved,
 )
 from app.providers.factory import get_provider
 
-router = APIRouter(prefix="/settings", tags=["settings"])
+TOKEN_HEADER = "x-jobpilot-token"
+
+def _allowed_hosts() -> set[str]:
+    return {h.strip().lower() for h in runtime_settings.get_settings().allowed_hosts.split(",") if h.strip()}
+
+def require_host(request: Request) -> None:
+    host = request.headers.get("host", "")
+    hostname = host.split(":", 1)[0].strip().lower()
+    if hostname not in _allowed_hosts():
+        raise HTTPException(status_code=400, detail={"code": "invalid_host", "message": "Invalid Host header"})
+
+def require_settings_token(request: Request) -> None:
+    provided = request.headers.get(TOKEN_HEADER)
+    expected = get_settings_token()
+    if not provided or not secrets.compare_digest(provided, expected):
+        raise HTTPException(status_code=403, detail={"code": "invalid_settings_token", "message": "Settings token is required"})
+
+router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_host)])
 
 
 class SettingsResponse(BaseModel):
@@ -79,7 +99,8 @@ def get_settings() -> SettingsResponse:
 
 
 @router.put("", response_model=SettingsResponse)
-def update_settings(payload: SettingsUpdate) -> SettingsResponse:
+def update_settings(request: Request, payload: SettingsUpdate) -> SettingsResponse:
+    require_settings_token(request)
     _require_writable()
     saved = load_saved()
     if payload.ai_provider is not None:
@@ -97,7 +118,8 @@ def update_settings(payload: SettingsUpdate) -> SettingsResponse:
 
 
 @router.post("/test-key", response_model=TestKeyResponse)
-async def test_key() -> TestKeyResponse:
+async def test_key(request: Request) -> TestKeyResponse:
+    require_settings_token(request)
     try:
         provider = get_provider()
     except Exception as exc:  # noqa: BLE001
@@ -109,3 +131,8 @@ async def test_key() -> TestKeyResponse:
     if not ok:
         return TestKeyResponse(ok=False, message="Key invalid or provider unreachable")
     return TestKeyResponse(ok=True, message="Key looks valid")
+
+
+@router.get("/token")
+def settings_token() -> dict[str, str]:
+    return {"token": get_settings_token()}
