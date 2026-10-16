@@ -245,7 +245,7 @@ async def _ashby_job(url: str) -> list[Job] | None:
         employment_type=employment_type,
         location=location,
         country=country,
-        remote_scope="worldwide" if is_remote else None,
+        remote_scope=None,
         allowed_regions=location if is_remote else None,
         seniority=_extract_seniority(title),
         page_text=re.sub(r"<[^>]+>", " ", description),

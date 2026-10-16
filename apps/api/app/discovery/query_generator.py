@@ -104,11 +104,15 @@ def target_terms(profile, preferences=None) -> list[str]:
 
 def target_prefilter_terms(profile, preferences=None) -> list[str]:
     roles = target_terms(profile, preferences=preferences)
+    # Include adjacent engineering roles so recall covers backend/frontend/mobile/AI.
+    for role in _adjacent_roles(profile, roles):
+        if role not in roles:
+            roles.append(role)
     skills = _listify(getattr(profile, "skills", []))
-    for skill in skills[:4]:
+    for skill in skills[:6]:
         if skill not in roles:
             roles.append(skill)
-    return roles[:8]
+    return roles[:16]
 
 
 def _exclude_terms(exclude_terms: list[str] | None) -> list[str]:
