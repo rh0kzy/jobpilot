@@ -23,6 +23,7 @@ async def fetch_jobs(
         follow_redirects=True,
     ) as client:
         response = await client.get(url, params=params)
+        response.encoding = "utf-8"
     response.raise_for_status()
     data = response.json()
 

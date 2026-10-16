@@ -11,7 +11,7 @@ from app.connectors import arbeitnow, greenhouse, jobicy, remoteok, remotive
 from app.core.models import EmploymentType, Job, Preferences, Profile, WorkMode
 from app.cv.parser import extract_text
 from app.cv.profile_extractor import extract_profile
-from app.discovery.fetcher import fetch_detailed
+from app.discovery.fetcher import fetch_detailed, get_domain_request_stats
 from app.discovery.query_generator import (
     generate_queries_with_metadata,
     target_prefilter_terms,
@@ -119,6 +119,7 @@ async def run_pipeline(
     extraction_counts: Counter[str] = Counter()
     skip_reason_counts: Counter[str] = Counter()
     listing_page_stats: list[dict] = []
+    listing_context: dict = {"stats": None}
     fetch_failures: list[tuple[str, str]] = []
     playwright_messages: list[str] = []
     jobs: list[Job] = []
@@ -200,6 +201,8 @@ async def run_pipeline(
         ats_jobs = await fetch_ats_job(url)
         if ats_jobs:
             visited.add(url)
+            if listing_context.get("stats") is not None:
+                listing_context["stats"]["child_single_job"] += 1
             extraction_counts["ats_adapter"] += len(ats_jobs)
             for job in ats_jobs:
                 attach_fetch(job, url)
@@ -221,6 +224,13 @@ async def run_pipeline(
         page_type = await classify_page(result.html, url, provider)
         if count_page:
             classification_counts[page_type] += 1
+            if listing_context.get("stats") is not None:
+                if page_type == "single_job":
+                    listing_context["stats"]["child_single_job"] += 1
+                elif page_type == "listing":
+                    listing_context["stats"]["child_listing"] += 1
+                else:
+                    listing_context["stats"]["child_other"] += 1
         if page_type == "single_job":
             await process_single_page(url, result.html, result.final_url or url, page_type=page_type)
         elif page_type == "listing" and depth < 1:
@@ -234,14 +244,19 @@ async def run_pipeline(
                     "verified": 0,
                     "dropped": 0,
                     "reason": link_reason,
+                    "child_single_job": 0,
+                    "child_listing": 0,
+                    "child_other": 0,
                 }
             )
             stats = listing_page_stats[-1]
+            listing_context["stats"] = stats
             for child in links[:child_limit]:
                 before_jobs = len(jobs)
                 await visit(child, depth + 1, count_page=True)
                 stats["links_fetched"] += 1
                 stats["extracted"] += max(0, len(jobs) - before_jobs)
+            listing_context["stats"] = None
         elif page_type == "listing":
             visited.add(url)
 
@@ -302,6 +317,7 @@ async def run_pipeline(
         "listing_page_stats": listing_page_stats,
         "connector_stats": connector_stats,
         "playwright_messages": playwright_messages,
+        "domain_request_stats": get_domain_request_stats(),
         "elapsed": elapsed,
     }
 
@@ -383,8 +399,11 @@ async def main() -> None:
         sum(1 for j in result["unique_jobs"] if j.allowed_countries),
         "auth_required_jobs=",
         sum(1 for j in result["unique_jobs"] if j.work_authorization_required),
+        "evidence_missing_for_non_unclear=",
+        sum(1 for j in result["unique_jobs"] if j.remote_scope != "unclear" and not str(j.eligibility_evidence or "").strip()),
     )
     print("[url_verification]", result["url_status_counts"])
+    print("[domain_request_stats]", result.get("domain_request_stats", {}))
     print("[freshness]", result["freshness_counts"])
     print(
         f"[jobs] extracted={sum(result['extraction_counts'].values())} "
@@ -418,7 +437,8 @@ async def main() -> None:
             f"posted={_display(job.posted_date)} | {_display(job.work_mode)} | "
             f"{_display(job.employment_type)} | location={_display(job.location)} | "
             f"country={_display(job.country)} | remote_scope={_display(job.remote_scope)} | "
-            f"allowed_countries={_display(job.allowed_countries)} | allowed_regions={_display(job.allowed_regions)} | "
+            f"allowed_countries={_display(job.allowed_countries)} | allowed_regions={_display(job.allowed_regions)} | " \
+            f"evidence={_display(job.eligibility_evidence)} | "
             f"timezone={_display(job.timezone_restriction)} | auth={_display(job.work_authorization_required)} | "
             f"seniority={_display(job.seniority)} ({_display(job.seniority_level)}) | "
             f"freshness={_display(job.freshness_status)} | verified={_display(job.url_verification_status)}"

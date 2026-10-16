@@ -26,6 +26,7 @@ async def fetch_jobs(
         follow_redirects=True,
     ) as client:
         response = await client.get(url, params=params)
+        response.encoding = "utf-8"
     response.raise_for_status()
     data = response.json()
 
@@ -60,7 +61,7 @@ async def fetch_jobs(
                 source="jobicy.com",
                 posted_date=posted,
                 work_mode="remote",
-                employment_type=item.get("jobType"),
+                employment_type=(item.get("jobType") or [None])[0] if isinstance(item.get("jobType"), list) else item.get("jobType"),
                 location=location or None,
                 allowed_regions=location or None,
                 seniority=_extract_seniority(title),

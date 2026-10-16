@@ -59,6 +59,7 @@ async def fetch_jobs(
             params = {"content": "true"} if content else None
             try:
                 response = await client.get(f"{_BASE_URL}/{token}/jobs", params=params)
+                response.encoding = "utf-8"
                 response.raise_for_status()
             except Exception:  # noqa: BLE001, S112
                 continue

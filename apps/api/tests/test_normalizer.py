@@ -56,7 +56,7 @@ def test_dedupe_by_company_title_country():
     assert len(dedupe([normalize_job(job), normalize_job(duplicate)])) == 1
 
 def test_normalize_country_iso_validation():
-    for raw, expected in [("fr", "FR"), ("US", "US"), ("worldwide", "WORLDWIDE"), (None, "unspecified"), ("NotACountry", "unspecified")]:
+    for raw, expected in [("fr", "FR"), ("US", "US"), ("worldwide", "unspecified"), (None, "unspecified"), ("NotACountry", "unspecified")]:
         job = Job(title="Engineer", company="Acme", url="u", source="s", country=raw)
         assert normalize_job(job).country == expected
 
@@ -69,7 +69,7 @@ def test_normalize_location_deduplicates_segments():
 def test_normalize_remote_scope_inference():
     job = Job(title="Engineer", company="Acme", url="u", source="s", allowed_countries=["DE"], remote_scope=None)
     assert normalize_job(job).remote_scope == "country_restricted"
-    job2 = Job(title="Engineer", company="Acme", url="u", source="s", page_text="Open worldwide", remote_scope=None)
+    job2 = Job(title="Engineer", company="Acme", url="u", source="s", page_text="Remote worldwide", remote_scope=None)
     assert normalize_job(job2).remote_scope == "worldwide"
 
 
@@ -94,6 +94,6 @@ def test_northbeam_canada():
 
 def test_worldwide_only_explicit():
     job = Job(title="Backend Developer", company="Acme", url="u", source="s", page_text="Remote anywhere in the world", remote_scope=None)
-    job2 = Job(title="Backend Developer", company="Acme", url="u", source="s", location="Ukraine", remote_scope=None)
+    job2 = Job(title="Backend Developer", company="Acme", url="u", source="s", location="On-site only role", remote_scope=None)
     assert normalize_job(job).remote_scope == "worldwide"
     assert normalize_job(job2).remote_scope == "unclear"

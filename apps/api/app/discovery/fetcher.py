@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import time
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -20,6 +21,8 @@ BLOCKED_DOMAINS = {
 }
 _last_request: dict[str, float] = {}
 _locks: dict[str, asyncio.Lock] = {}
+_domain_request_starts: dict[str, list[float]] = defaultdict(list)
+_domain_request_delays: dict[str, list[float]] = defaultdict(list)
 
 
 @dataclass
@@ -42,6 +45,7 @@ def _domain(url: str) -> str:
 
 async def fetch_detailed(url: str, timeout: int = 30, cache_dir: str = "./.cache") -> FetchResult:
     domain = _domain(url)
+    fetch_started = time.monotonic()
     if domain in BLOCKED_DOMAINS:
         return FetchResult(url=url, status="blocked_by_blocklist", final_url=url)
 
@@ -74,6 +78,9 @@ async def fetch_detailed(url: str, timeout: int = 30, cache_dir: str = "./.cache
         return FetchResult(url=url, status="blocked_by_blocklist", final_url=url)
 
     lock = _locks.setdefault(domain, asyncio.Lock())
+    if _domain_request_starts[domain]:
+        _domain_request_delays[domain].append(fetch_started - _domain_request_starts[domain][-1])
+    _domain_request_starts[domain].append(fetch_started)
     async with lock:
         now = time.monotonic()
         if domain in _last_request and now - _last_request[domain] < 1.0:
@@ -107,3 +114,16 @@ async def fetch_detailed(url: str, timeout: int = 30, cache_dir: str = "./.cache
 async def fetch(url: str, timeout: int = 30, cache_dir: str = "./.cache") -> str | None:
     result = await fetch_detailed(url, timeout=timeout, cache_dir=cache_dir)
     return result.html
+
+def get_domain_request_stats() -> dict[str, dict]:
+    stats = {}
+    for domain in list(_domain_request_starts.keys()):
+        delays = [delay for delay in _domain_request_delays.get(domain, []) if delay is not None]
+        requests = len(_domain_request_starts[domain])
+        stats[domain] = {
+            "requests": requests,
+            "min_delay": (min(delays) if delays else None),
+            "avg_delay": (sum(delays) / len(delays) if delays else None),
+            "max_delay": (max(delays) if delays else None),
+        }
+    return stats
