@@ -43,8 +43,12 @@ async def fetch_jobs(
     limit: int = 50,
     target_roles: list[str] | None = None,
     content: bool = True,
+    prefilter_stats: dict | None = None,
 ) -> list[Job]:
     jobs: list[Job] = []
+    seen_count = 0
+    passed_count = 0
+    rejected_titles: list[str] = []
     tokens = _load_board_tokens()
     async with httpx.AsyncClient(
         timeout=30,
@@ -59,10 +63,14 @@ async def fetch_jobs(
             except Exception:  # noqa: BLE001, S112
                 continue
             for item in response.json().get("jobs", []):
-                if len(jobs) >= limit:
-                    break
                 title = item.get("title", "")
+                seen_count += 1
                 if not matches_role(title, item.get("tags"), target_roles):
+                    if len(rejected_titles) < 10:
+                        rejected_titles.append(title)
+                    continue
+                passed_count += 1
+                if len(jobs) >= limit:
                     continue
                 updated = item.get("updated_at")
                 try:
@@ -97,4 +105,6 @@ async def fetch_jobs(
                 )
             # small delay between board requests, below Greenhouse public crawl limits
             await asyncio.sleep(0.2)
+    if prefilter_stats is not None:
+        prefilter_stats.update({"source": "greenhouse.io (boards)", "seen": seen_count, "passed_prefilter": passed_count, "returned": len(jobs), "rejected_sample": rejected_titles, "target_roles": target_roles or []})
     return jobs

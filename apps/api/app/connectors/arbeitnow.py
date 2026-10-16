@@ -24,6 +24,7 @@ async def fetch_jobs(
     limit: int = 50,
     target_roles: list[str] | None = None,
     search: str | None = None,
+    prefilter_stats: dict | None = None,
 ) -> list[Job]:
     url = "https://www.arbeitnow.com/api/job-board-api"
     params = {"search": search} if search else None
@@ -37,9 +38,18 @@ async def fetch_jobs(
     data = response.json()
 
     jobs: list[Job] = []
-    for item in data.get("data", [])[:limit]:
+    seen_count = 0
+    passed_count = 0
+    rejected_titles: list[str] = []
+    for item in data.get("data", []):
         title = item.get("title", "")
+        seen_count += 1
         if not matches_role(title, item.get("tags"), target_roles):
+            if len(rejected_titles) < 10:
+                rejected_titles.append(title)
+            continue
+        passed_count += 1
+        if len(jobs) >= limit:
             continue
         posted = _as_date(item.get("created_at"))
         jobs.append(
@@ -61,4 +71,6 @@ async def fetch_jobs(
                 page_text=item.get("description", ""),
             )
         )
+    if prefilter_stats is not None:
+        prefilter_stats.update({"source": "arbeitnow.com", "seen": seen_count, "passed_prefilter": passed_count, "returned": len(jobs), "rejected_sample": rejected_titles, "target_roles": target_roles or []})
     return jobs

@@ -13,6 +13,7 @@ async def fetch_jobs(
     limit: int = 50,
     target_roles: list[str] | None = None,
     tag: str | None = None,
+    prefilter_stats: dict | None = None,
 ) -> list[Job]:
     url = "https://remoteok.com/api"
     params = {"tag": tag} if tag else None
@@ -26,15 +27,22 @@ async def fetch_jobs(
     data = response.json()
 
     jobs = []
+    seen_count = 0
+    passed_count = 0
+    rejected_titles: list[str] = []
     for item in data[1:] if isinstance(data, list) else []:
         if not isinstance(item, dict):
             continue
         title = item.get("position", "")
         tags = item.get("tags") or []
+        seen_count += 1
         if not matches_role(title, tags, target_roles):
+            if len(rejected_titles) < 10:
+                rejected_titles.append(title)
             continue
+        passed_count += 1
         if len(jobs) >= limit:
-            break
+            continue
         pub = item.get("date")
         try:
             posted = date.fromisoformat(pub[:10]) if pub else None
@@ -57,4 +65,6 @@ async def fetch_jobs(
                 page_text=item.get("description", ""),
             )
         )
+    if prefilter_stats is not None:
+        prefilter_stats.update({"source": "remoteok.com", "seen": seen_count, "passed_prefilter": passed_count, "returned": len(jobs), "rejected_sample": rejected_titles, "target_roles": target_roles or []})
     return jobs

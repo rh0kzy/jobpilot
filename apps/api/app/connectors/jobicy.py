@@ -14,6 +14,7 @@ async def fetch_jobs(
     target_roles: list[str] | None = None,
     tag: str | None = None,
     count: int = 50,
+    prefilter_stats: dict | None = None,
 ) -> list[Job]:
     url = "https://jobicy.com/api/v2/remote-jobs"
     params = {"count": min(limit, count)}
@@ -30,12 +31,19 @@ async def fetch_jobs(
 
     items = data.get("jobs", []) if isinstance(data, dict) else []
     jobs: list[Job] = []
+    seen_count = 0
+    passed_count = 0
+    rejected_titles: list[str] = []
     for item in items:
-        if len(jobs) >= limit:
-            break
         title = item.get("jobTitle", "")
         tags = item.get("jobIndustry", []) or []
+        seen_count += 1
         if not matches_role(title, tags, target_roles):
+            if len(rejected_titles) < 10:
+                rejected_titles.append(title)
+            continue
+        passed_count += 1
+        if len(jobs) >= limit:
             continue
         pub = item.get("pubDate")
         try:
@@ -60,4 +68,6 @@ async def fetch_jobs(
                 page_text=item.get("jobExcerpt", "") or "",
             )
         )
+    if prefilter_stats is not None:
+        prefilter_stats.update({"source": "jobicy.com", "seen": seen_count, "passed_prefilter": passed_count, "returned": len(jobs), "rejected_sample": rejected_titles, "target_roles": target_roles or []})
     return jobs

@@ -139,6 +139,8 @@ class Job(BaseModel):
     original_url: str | None = None
     url_verified: bool = False
     url_verification_status: str | None = None
+    page_type: str | None = None
+    confidence: float | None = None
     freshness_status: str | None = None
     page_text: str = ""
 

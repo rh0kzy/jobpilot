@@ -1,5 +1,9 @@
 from app.core.models import Education, EmploymentType, Preferences, Profile, WorkMode
-from app.discovery.query_generator import generate_queries_with_metadata
+from app.discovery.query_generator import (
+    generate_queries_with_metadata,
+    target_prefilter_terms,
+    target_terms,
+)
 
 
 def _profile():
@@ -77,3 +81,16 @@ def test_ats_domains_present_and_deduplicated():
     assert any(q.kind == "ats" and "boards.greenhouse.io" in q.text for q in queries)
     texts = [q.text.lower() for q in queries]
     assert len(texts) == len(set(texts))
+
+def test_canonicalizes_french_roles_and_skips_internship():
+    profile = Profile(job_titles=["Développeur Fullstack indépendant", "Stagiaire Développeur"], skills=["NestJS"])
+    prefs = _prefs()
+    roles = target_terms(profile, prefs)
+    assert roles == ["Full-Stack Developer"]
+    assert target_prefilter_terms(profile, prefs) == ["Full-Stack Developer", "NestJS"]
+
+
+def test_canonicalizes_english_roles():
+    profile = Profile(job_titles=["Back-End Software Engineer", "Frontend Developer"], skills=["React"])
+    roles = target_terms(profile, _prefs())
+    assert roles == ["Backend Developer", "Frontend Developer"]

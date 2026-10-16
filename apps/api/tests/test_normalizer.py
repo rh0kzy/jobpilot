@@ -54,3 +54,46 @@ def test_dedupe_by_company_title_country():
     job = Job(title="Engineer", company="Acme", url="u1", source="s", page_text="", country="DE")
     duplicate = Job(title="Engineer", company="Acme", url="u2", source="s", page_text="", country="de")
     assert len(dedupe([normalize_job(job), normalize_job(duplicate)])) == 1
+
+def test_normalize_country_iso_validation():
+    for raw, expected in [("fr", "FR"), ("US", "US"), ("worldwide", "WORLDWIDE"), (None, "unspecified"), ("NotACountry", "unspecified")]:
+        job = Job(title="Engineer", company="Acme", url="u", source="s", country=raw)
+        assert normalize_job(job).country == expected
+
+
+def test_normalize_location_deduplicates_segments():
+    job = Job(title="Engineer", company="Acme", url="u", source="s", location="Berlin, Berlin, DE")
+    assert normalize_job(job).location == "Berlin, DE"
+
+
+def test_normalize_remote_scope_inference():
+    job = Job(title="Engineer", company="Acme", url="u", source="s", allowed_countries=["DE"], remote_scope=None)
+    assert normalize_job(job).remote_scope == "country_restricted"
+    job2 = Job(title="Engineer", company="Acme", url="u", source="s", page_text="Open worldwide", remote_scope=None)
+    assert normalize_job(job2).remote_scope == "worldwide"
+
+
+def test_clara_locations_become_countries():
+    job = Job(title="Senior Fullstack Engineer", company="Clara", url="u", source="greenhouse.io/clara",
+              location="Bogota / CUN / Colombia; Mexico City / CDMX / Mexico; Sao Paulo / SP / Brazil",
+              allowed_regions="Bogota / CUN / Colombia; Mexico City / CDMX / Mexico; Sao Paulo / SP / Brazil",
+              remote_scope=None)
+    normalized = normalize_job(job)
+    assert normalized.remote_scope == "country_restricted"
+    assert normalized.allowed_countries == ["CO", "MX", "BR"]
+    assert normalized.eligibility_evidence
+
+
+def test_northbeam_canada():
+    job = Job(title="Senior Fullstack Engineer", company="Northbeam", url="u", source="greenhouse.io/northbeam",
+              location="Remote - Canada", allowed_regions="Remote - Canada", remote_scope=None)
+    normalized = normalize_job(job)
+    assert normalized.remote_scope == "country_restricted"
+    assert normalized.allowed_countries == ["CA"]
+
+
+def test_worldwide_only_explicit():
+    job = Job(title="Backend Developer", company="Acme", url="u", source="s", page_text="Remote anywhere in the world", remote_scope=None)
+    job2 = Job(title="Backend Developer", company="Acme", url="u", source="s", location="Ukraine", remote_scope=None)
+    assert normalize_job(job).remote_scope == "worldwide"
+    assert normalize_job(job2).remote_scope == "unclear"

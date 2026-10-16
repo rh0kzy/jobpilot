@@ -50,3 +50,34 @@ async def test_unmeaningful_page_returns_no_llm_call():
     jobs = await extract_jobs("<html><body></body></html>", "https://example.com/job/2", provider)
     assert jobs == []
     assert provider.calls == 0
+
+def test_iso_country_detection():
+    from app.extraction.extractor import _is_iso_country
+
+    assert _is_iso_country("US") is True
+    assert _is_iso_country("usa") is False
+    assert _is_iso_country("X") is False
+
+
+def test_applicant_locations_iso_and_region_extraction():
+    from app.extraction.extractor import _extract_applicant_locations
+
+    item = {
+        "applicantLocationRequirements": [
+            {"address": {"addressCountry": "US"}},
+            {"address": {"addressCountry": "EMEA"}},
+        ]
+    }
+    values = _extract_applicant_locations(item)
+    assert values == ["US", "EMEA"]
+
+
+def test_jsonld_eligibility_fields():
+    from pathlib import Path
+
+    html = Path("tests/fixtures/job_jsonld.html").read_text()
+    import asyncio
+    jobs = asyncio.run(__import__("app.extraction.extractor", fromlist=["extract_jobs"]).extract_jobs(html, "https://example.com/job/1"))
+    # fixture's applicantLocationRequirements produces allowed_countries US; evidence remains ISO.
+    assert jobs[0].allowed_countries == ["US"]
+    assert jobs[0].eligibility_evidence == "US"

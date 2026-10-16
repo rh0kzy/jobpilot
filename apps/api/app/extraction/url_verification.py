@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 
 from app.core.models import Job
 from app.discovery.fetcher import fetch_detailed
-from app.extraction.classification import _url_is_single_job, classify_page
+from app.extraction.classification import _single_posting_signals, _url_is_single_job, classify_page
 from app.filters.liveness import is_live
 
 _NOT_FOUND_PHRASES = (
@@ -178,18 +178,16 @@ async def audit_verification(
     sample = random.sample(jobs, min(sample_size, len(jobs)))
     passed = 0
     for job in sample:
-        # Re-run a content match by verifying the stored URL.
         temp_job = job.model_copy()
-        # Use a local candidate verification without dropping.
         from app.discovery.fetcher import fetch_detailed as _fetch
 
         result = await _fetch(temp_job.url, timeout=timeout, cache_dir=cache_dir)
-        if (
-            result.status == "ok"
-            and result.html is not None
-            and is_live(result.html)
-            and _title_matches(temp_job.title, result.html)
-            and _company_matches(temp_job, result.html, result.final_url or temp_job.url)
-        ):
+        single_signal, signal_confidence = _single_posting_signals(result.html or "", temp_job.url) if result.html else (False, 0.0)
+        company_ok = _company_matches(temp_job, result.html or "", result.final_url or temp_job.url)
+        title_ok = _title_matches(temp_job.title, result.html or "") if result.html else False
+        live = bool(result.html and is_live(result.html))
+        if result.status == "ok" and result.html is not None and live and title_ok and company_ok and single_signal:
             passed += 1
+        temp_job.page_type = "single_job" if single_signal else temp_job.page_type
+        temp_job.confidence = max(temp_job.confidence or 0.0, signal_confidence)
     return {"sampled": len(sample), "passed": passed}

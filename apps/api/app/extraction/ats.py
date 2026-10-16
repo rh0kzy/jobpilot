@@ -9,6 +9,7 @@ import httpx
 from app.core.models import Job
 from app.extraction.extractor import (
     _clean,
+    _extract_country,
     _extract_employment,
     _extract_seniority,
     _extract_work_mode,
@@ -119,7 +120,7 @@ async def _lever_job(url: str) -> list[Job]:
             posted_date=posted,
             work_mode=_extract_work_mode(
                 {
-                    "jobLocationType": cats.get("commitment") and "remote" or None,
+                    "jobLocationType": item.get("workplaceType"),
                     "description": description,
                 }
             ),
@@ -131,10 +132,125 @@ async def _lever_job(url: str) -> list[Job]:
     ]
 
 
-async def _ashby_job(url: str) -> list[Job] | None:
-    # No documented per-posting public endpoint in this lightweight adapter;
-    # return None to use the normal fetch/extraction path.
+def _ashby_board_name(url: str) -> str | None:
+    parts = [p for p in urlparse(url).path.split("/") if p]
+    return parts[0] if parts else None
+
+
+def _ashby_posting_key(url: str) -> str | None:
+    parts = [p for p in urlparse(url).path.split("/") if p]
+    return parts[1] if len(parts) > 1 else None
+
+
+def _ashby_location(item: dict) -> str | None:
+    direct = item.get("location")
+    if isinstance(direct, str) and direct.strip():
+        return _clean(direct)
+    address = item.get("address")
+    if isinstance(address, dict):
+        postal = address.get("postalAddress")
+        if not isinstance(postal, dict):
+            postal = address
+        parts = []
+        for key in ("addressLocality", "addressRegion", "addressCountry"):
+            value = _clean(postal.get(key))
+            if value and value not in parts:
+                parts.append(value)
+        if parts:
+            return ", ".join(parts)
     return None
+
+
+def _ashby_address_country(item: dict) -> str | None:
+    address = item.get("address")
+    if isinstance(address, dict):
+        postal = address.get("postalAddress")
+        if not isinstance(postal, dict):
+            postal = address
+        country = postal.get("addressCountry")
+        if country:
+            return _extract_country(country)
+    return None
+
+
+def _ashby_matches(item: dict, posting_key: str | None) -> bool:
+    if not posting_key:
+        return False
+    for field in ("id", "jobId", "jobPostingId", "jobPostingID"):
+        if str(item.get(field) or "") == posting_key:
+            return True
+    for field in ("jobUrl", "applyUrl", "url", "hostedUrl", "externalLink", "applyLink"):
+        value = item.get(field)
+        if isinstance(value, str) and posting_key in value:
+            return True
+    return False
+
+
+async def _ashby_job(url: str) -> list[Job] | None:
+    board = _ashby_board_name(url)
+    if not board:
+        return None
+    posting_key = _ashby_posting_key(url)
+    api_url = f"https://api.ashbyhq.com/posting-api/job-board/{board}"
+    async with httpx.AsyncClient(timeout=30, headers={"User-Agent": "JobPilot"}) as client:
+        resp = await client.get(api_url)
+    if resp.status_code >= 400:
+        return None
+    try:
+        data = resp.json()
+    except Exception:  # noqa: BLE001
+        return None
+    items = data.get("jobs", []) if isinstance(data, dict) else []
+    if not isinstance(items, list) or not items:
+        return None
+
+    chosen = None
+    if posting_key:
+        for item in items:
+            if isinstance(item, dict) and _ashby_matches(item, posting_key):
+                chosen = item
+                break
+    if chosen is None and posting_key is None and len(items) == 1:
+        chosen = items[0] if isinstance(items[0], dict) else None
+    if chosen is None and posting_key is not None and len(items) == 1:
+        chosen = items[0] if isinstance(items[0], dict) else None
+    if not isinstance(chosen, dict):
+        return None
+
+    title = _clean(chosen.get("title")) or ""
+    if not title:
+        return None
+    is_remote = bool(chosen.get("isRemote"))
+    workplace_type = chosen.get("workplaceType")
+    work_mode = "remote" if is_remote else _extract_work_mode({"jobLocationType": workplace_type, "description": ""})
+    description = chosen.get("descriptionPlain") or chosen.get("descriptionHtml") or ""
+    description = _clean(description) or ""
+    location = _ashby_location(chosen)
+    company = _clean(
+        chosen.get("organizationName") or chosen.get("organization") or board.replace("-", " ").replace("_", " ").title()
+    )
+    posted = _parse_date(chosen.get("publishedAt") or chosen.get("updatedAt"))
+    employment_type = _extract_employment({"employmentType": chosen.get("employmentType")})
+    country = _ashby_address_country(chosen)
+    if country and not is_remote and not location:
+        location = country
+    job = Job(
+        title=title,
+        company=company or "",
+        url=chosen.get("jobUrl") or chosen.get("applyUrl") or url,
+        original_url=url,
+        source=f"ashbyhq.com/{board}",
+        posted_date=posted,
+        work_mode=work_mode,
+        employment_type=employment_type,
+        location=location,
+        country=country,
+        remote_scope="worldwide" if is_remote else None,
+        allowed_regions=location if is_remote else None,
+        seniority=_extract_seniority(title),
+        page_text=re.sub(r"<[^>]+>", " ", description),
+    )
+    return [job]
 
 
 async def fetch_ats_job(url: str) -> list[Job] | None:

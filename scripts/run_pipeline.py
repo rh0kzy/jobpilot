@@ -12,10 +12,16 @@ from app.core.models import EmploymentType, Job, Preferences, Profile, WorkMode
 from app.cv.parser import extract_text
 from app.cv.profile_extractor import extract_profile
 from app.discovery.fetcher import fetch_detailed
-from app.discovery.query_generator import generate_queries_with_metadata, target_terms
+from app.discovery.query_generator import (
+    generate_queries_with_metadata,
+    target_prefilter_terms,
+)
 from app.discovery.search import get_search_provider
-from app.extraction.classification import classify_page, extract_job_links
 from app.extraction.ats import fetch_ats_job
+from app.extraction.classification import (
+    classify_page,
+    extract_job_links_detailed,
+)
 from app.extraction.extractor import _from_jsonld
 from app.extraction.page_text import (
     has_meaningful_job_text,
@@ -76,6 +82,7 @@ async def run_pipeline(
     freshness_days: int,
     llm_max_chars: int,
     use_playwright: bool,
+    max_queries: int = 10,
 ):
     started = time.monotonic()
     search = get_search_provider()
@@ -90,7 +97,7 @@ async def run_pipeline(
             continue
         seen_q.add(q.text.lower())
         unique_meta.append(q)
-    query_meta = unique_meta[: args.max_queries]
+    query_meta = unique_meta[: max_queries]
     queries = [q.text for q in query_meta]
     urls: list[str] = []
     search_calls = 0
@@ -98,7 +105,6 @@ async def run_pipeline(
     for query in queries:
         try:
             search_calls += 1
-            before = getattr(search, "last_cache_hit", False)
             found = await search.search(query, limit=search_limit)
             if not getattr(search, "last_cache_hit", False):
                 search_credits_used += 1
@@ -123,7 +129,7 @@ async def run_pipeline(
         job.url_verified = True
         job.url_verification_status = "verified_from_fetched_page"
 
-    async def process_single_page(url: str, html: str, final_url: str) -> None:
+    async def process_single_page(url: str, html: str, final_url: str, page_type: str = "single_job") -> None:
         if url in visited:
             return
         visited.add(url)
@@ -136,6 +142,8 @@ async def run_pipeline(
             extraction_counts["jsonld"] += len(jsonld_jobs)
             for job in jsonld_jobs:
                 attach_fetch(job, final_url)
+                job.page_type = page_type
+                job.confidence = job.confidence or 0.85
                 jobs.append(job)
             return
 
@@ -157,6 +165,8 @@ async def run_pipeline(
                     extraction_counts[method] += len(rendered_jobs)
                     for job in rendered_jobs:
                         attach_fetch(job, final_url)
+                        job.page_type = page_type
+                        job.confidence = job.confidence or 0.7
                         jobs.append(job)
                     return
             else:
@@ -177,6 +187,8 @@ async def run_pipeline(
             extraction_counts["llm_fallback"] += len(extracted)
             for job in extracted:
                 attach_fetch(job, final_url)
+                job.page_type = page_type
+                job.confidence = job.confidence or 0.6
                 jobs.append(job)
         else:
             skip_reason_counts["extraction_returned_empty"] += 1
@@ -191,6 +203,8 @@ async def run_pipeline(
             extraction_counts["ats_adapter"] += len(ats_jobs)
             for job in ats_jobs:
                 attach_fetch(job, url)
+                job.page_type = "single_job"
+                job.confidence = job.confidence or 0.9
                 jobs.append(job)
             if count_page:
                 classification_counts["single_job"] += 1
@@ -208,9 +222,9 @@ async def run_pipeline(
         if count_page:
             classification_counts[page_type] += 1
         if page_type == "single_job":
-            await process_single_page(url, result.html, result.final_url or url)
+            await process_single_page(url, result.html, result.final_url or url, page_type=page_type)
         elif page_type == "listing" and depth < 1:
-            links = extract_job_links(result.html, url, limit=listing_limit)
+            links, link_reason = extract_job_links_detailed(result.html, url, limit=listing_limit)
             listing_page_stats.append(
                 {
                     "url": url,
@@ -219,6 +233,7 @@ async def run_pipeline(
                     "extracted": 0,
                     "verified": 0,
                     "dropped": 0,
+                    "reason": link_reason,
                 }
             )
             stats = listing_page_stats[-1]
@@ -233,7 +248,8 @@ async def run_pipeline(
     for url in candidate_urls:
         await visit(url, 0, count_page=True)
 
-    target_roles = target_terms(profile)
+    connector_stats: dict = {}
+    target_roles = target_prefilter_terms(profile, prefs)
     lower_roles = " ".join(target_roles).lower()
     connector_inputs = {
         "remotive": {
@@ -249,9 +265,12 @@ async def run_pipeline(
     for connector in (remotive, arbeitnow, remoteok, greenhouse, jobicy):
         try:
             inputs = connector_inputs.get(connector.__name__.split(".")[-1], {})
+            stats = connector_stats.setdefault(connector.__name__.split(".")[-1], {})
             fetched = await connector.fetch_jobs(
-                limit=50, target_roles=target_roles, **inputs
+                limit=50, target_roles=target_roles, prefilter_stats=stats, **inputs
             )
+            for job in fetched:
+                job.confidence = job.confidence or 0.55
             extraction_counts["connector"] += len(fetched)
             jobs.extend(fetched)
         except Exception as exc:  # noqa: BLE001
@@ -281,6 +300,7 @@ async def run_pipeline(
         "search_calls": search_calls,
         "search_credits_used": search_credits_used,
         "listing_page_stats": listing_page_stats,
+        "connector_stats": connector_stats,
         "playwright_messages": playwright_messages,
         "elapsed": elapsed,
     }
@@ -332,6 +352,7 @@ async def main() -> None:
         freshness_days=args.freshness_days,
         llm_max_chars=args.llm_max_chars,
         use_playwright=not args.no_playwright,
+        max_queries=args.max_queries,
     )
 
     print(
@@ -350,6 +371,7 @@ async def main() -> None:
     print("[extraction]", dict(result["extraction_counts"]))
     print("[skipped_single_pages]", dict(result["skip_reason_counts"]))
     print("[listing_pages]", result.get("listing_page_stats", []))
+    print("[connector_stats]", result.get("connector_stats", {}))
     from collections import Counter as _C
 
     print(
@@ -379,13 +401,11 @@ async def main() -> None:
     )
 
     if args.verify_audit:
-        audit = asyncio.run(
-            audit_verification(
-                result["unique_jobs"],
-                sample_size=args.audit_sample,
-                cache_dir="./.cache",
-                timeout=30,
-            )
+        audit = await audit_verification(
+            result["unique_jobs"],
+            sample_size=args.audit_sample,
+            cache_dir="./.cache",
+            timeout=30,
         )
         print(
             f"[verification_audit] sampled={audit['sampled']} passed={audit['passed']}"

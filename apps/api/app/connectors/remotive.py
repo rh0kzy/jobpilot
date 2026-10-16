@@ -64,6 +64,7 @@ async def fetch_jobs(
     limit: int = 50,
     target_roles: list[str] | None = None,
     category: str | None = "software-dev",
+    prefilter_stats: dict | None = None,
 ) -> list[Job]:
     cache_dir = _cache_dir()
     jobs_path, meta_path = _paths(cache_dir)
@@ -74,10 +75,14 @@ async def fetch_jobs(
     cached_jobs = _parse_jobs(cached_raw) if isinstance(cached_raw, list) else None
 
     if cached_jobs is not None and not _should_refresh(meta, now, cached_jobs):
+        if prefilter_stats is not None:
+            prefilter_stats.update({"source": "remotive.com", "seen": len(cached_jobs), "passed_prefilter": len(cached_jobs), "returned": len(cached_jobs[:limit]), "rejected_sample": [], "target_roles": target_roles or [], "cache_hit": True})
         return cached_jobs[:limit]
 
     if meta and meta.get("date") == today and int(meta.get("count", 0)) >= DAILY_LIMIT:
         # Keep attribution/link by returning the last cached result set.
+        if prefilter_stats is not None:
+            prefilter_stats.update({"source": "remotive.com", "seen": len(cached_jobs or []), "passed_prefilter": len(cached_jobs or []), "returned": len((cached_jobs or [])[:limit]), "rejected_sample": [], "target_roles": target_roles or [], "cache_hit": True})
         return (cached_jobs or [])[:limit]
 
     last_fetch = meta.get("last_fetch") if isinstance(meta, dict) else None
@@ -96,15 +101,32 @@ async def fetch_jobs(
     data = response.json()
 
     jobs = []
-    for item in data.get("jobs", [])[:limit]:
+    seen_count = 0
+    passed_count = 0
+    rejected_titles: list[str] = []
+    for item in data.get("jobs", []):
+        if len(jobs) >= limit:
+            # Still account for remaining items in the feed totals.
+            title = item.get("title", "")
+            seen_count += 1
+            if not matches_role(title, item.get("tags"), target_roles):
+                if len(rejected_titles) < 10:
+                    rejected_titles.append(title)
+            else:
+                passed_count += 1
+            continue
+        title = item.get("title", "")
+        seen_count += 1
+        if not matches_role(title, item.get("tags"), target_roles):
+            if len(rejected_titles) < 10:
+                rejected_titles.append(title)
+            continue
+        passed_count += 1
         pub = item.get("publication_date")
         try:
             posted = date.fromisoformat(pub[:10]) if pub else None
         except Exception:  # noqa: BLE001
             posted = None
-        title = item.get("title", "")
-        if not matches_role(title, item.get("tags"), target_roles):
-            continue
         jobs.append(
             Job(
                 title=title,
@@ -143,4 +165,15 @@ async def fetch_jobs(
         os.chmod(meta_path, 0o600)
     except OSError:
         pass
+    if prefilter_stats is not None:
+        prefilter_stats.update(
+            {
+                "source": "remotive.com",
+                "seen": seen_count,
+                "passed_prefilter": passed_count,
+                "returned": len(jobs),
+                "rejected_sample": rejected_titles,
+                "target_roles": target_roles or [],
+            }
+        )
     return jobs
