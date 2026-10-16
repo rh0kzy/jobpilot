@@ -11,7 +11,7 @@ from app.connectors import arbeitnow, greenhouse, jobicy, remoteok, remotive
 from app.core.models import EmploymentType, Job, Preferences, Profile, WorkMode
 from app.cv.parser import extract_text
 from app.cv.profile_extractor import extract_profile
-from app.discovery.fetcher import fetch_detailed
+from app.discovery.fetcher import fetch_detailed, get_domain_request_stats
 from app.discovery.query_generator import (
     generate_queries_with_metadata,
     target_prefilter_terms,
@@ -317,6 +317,7 @@ async def run_pipeline(
         "listing_page_stats": listing_page_stats,
         "connector_stats": connector_stats,
         "playwright_messages": playwright_messages,
+        "domain_request_stats": get_domain_request_stats(),
         "elapsed": elapsed,
     }
 
@@ -402,6 +403,7 @@ async def main() -> None:
         sum(1 for j in result["unique_jobs"] if j.remote_scope != "unclear" and not str(j.eligibility_evidence or "").strip()),
     )
     print("[url_verification]", result["url_status_counts"])
+    print("[domain_request_stats]", result.get("domain_request_stats", {}))
     print("[freshness]", result["freshness_counts"])
     print(
         f"[jobs] extracted={sum(result['extraction_counts'].values())} "

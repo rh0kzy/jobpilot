@@ -330,9 +330,78 @@ def scan_authorization_text(text: str | None) -> list[str]:
     return found
 
 
+_AUTH_REQUIREMENT_PHRASES = (
+    "must be",
+    "required",
+    "eligible to work",
+    "authorized to work",
+    "authorised to work",
+    "authorized to reside",
+    "authorised to reside",
+    "citizens only",
+    "citizenship required",
+    "clearance required",
+    "work authorization required",
+    "work authorisation required",
+    "right to work",
+    "must reside",
+    "must be located",
+    "must be based",
+    "doit être",
+    "requis",
+    "autorisé à travailler",
+    "autorisé à résider",
+    "citoyens seulement",
+    "habilitation requise",
+    "droit de travailler",
+    "debe ser",
+    "requerido",
+    "autorizado a trabajar",
+    "autorizado a residir",
+    "ciudadanos solamente",
+    "autorización de trabajo requerida",
+    "deve ser",
+    "obrigatório",
+    "autorizado a trabalhar",
+    "autorizado a residir",
+    "cidadãos somente",
+    "autorização de trabalho requerida",
+)
+_EEO_TERMS = (
+    "equal opportunity",
+    "equal-opportunity",
+    "discrimination",
+    "diversity",
+    "minority",
+    "protected veteran",
+    "disability",
+    "eeo",
+)
+
+
+def _split_sentences(text: str | None) -> list[str]:
+    if not text:
+        return []
+    parts = re.split(r"(?<=[.!?])\s+|\n+", str(text))
+    return [p.strip() for p in parts if p.strip()]
+
+
+def scan_authorization_requirements(text: str | None) -> list[str]:
+    found: list[str] = []
+    for sentence in _split_sentences(text):
+        lowered = _fold(sentence)
+        if any(term in lowered for term in _EEO_TERMS):
+            continue
+        if any(term in lowered for term in _AUTH_REQUIREMENT_PHRASES) and sentence not in found:
+            found.append(sentence)
+    return found
+
+
 def extract_work_authorization(text: str | None) -> str | None:
-    matches = scan_authorization_text(text)
-    return ", ".join(matches) if matches else None
+    sentences = scan_authorization_requirements(text)
+    if sentences:
+        return " ".join(sentences)[:500]
+    return None
 
 
 def _region_label_from_text(value: str | None) -> str | None:
@@ -473,15 +542,19 @@ def _clean_list(values) -> list[str]:
 
 
 def normalize_job(job: Job) -> Job:
-    job = job.model_copy(update={
-        "title": _repair_mojibake(job.title),
-        "company": _repair_mojibake(job.company),
-        "location": _repair_mojibake(job.location),
-        "allowed_regions": _repair_mojibake(job.allowed_regions),
-        "eligibility_evidence": _repair_mojibake(job.eligibility_evidence),
-        "page_text": _repair_mojibake(job.page_text),
-        "work_authorization_required": _repair_mojibake(job.work_authorization_required),
-    })
+    # Repair common mojibake before any eligibility inference.
+    job = job.model_copy(
+        update={
+            "title": _repair_mojibake(job.title),
+            "company": _repair_mojibake(job.company),
+            "location": _repair_mojibake(job.location),
+            "allowed_regions": _repair_mojibake(job.allowed_regions),
+            "eligibility_evidence": _repair_mojibake(job.eligibility_evidence),
+            "page_text": _repair_mojibake(job.page_text),
+            "work_authorization_required": _repair_mojibake(job.work_authorization_required),
+        }
+    )
+
     title_text = (job.title or "").lower()
     work_mode = _norm_enum(
         job.work_mode, {"remote", "hybrid", "onsite", "unspecified"}, "unspecified"
@@ -500,72 +573,112 @@ def normalize_job(job: Job) -> Job:
     if seniority_level not in {"junior", "mid", "senior", "lead", "unspecified"}:
         seniority_level = _norm_seniority_level(seniority_level)
 
-    # Collect eligibility evidence and stated scope from immutable inputs only.
-    location_text = str(job.location or "")
-    allowed_regions_text = str(job.allowed_regions or "")
-    evidence_seed = str(job.eligibility_evidence or "")
-    country_seed = str(job.country or "")
-    " / ".join(
-        str(v)
-        for v in [location_text, allowed_regions_text, evidence_seed, country_seed]
-        if v
+    location_text = str(job.location or "").strip()
+    allowed_regions_text = str(job.allowed_regions or "").strip()
+    evidence_seed = str(job.eligibility_evidence or "").strip()
+    country_seed = str(job.country or "").strip()
+    page_text = str(job.page_text or "")
+    folded_location = _fold(location_text)
+
+    text_all = " / ".join(
+        v for v in [location_text, allowed_regions_text, evidence_seed, country_seed, page_text] if v
     )
     location_worldwide_text = " / ".join(
-        str(v) for v in [location_text, allowed_regions_text, evidence_seed, country_seed] if v
+        v for v in [location_text, allowed_regions_text, evidence_seed, country_seed] if v
     )
-    page_worldwide_text = str(job.page_text or "")
-    explicit_worldwide = _is_explicit_worldwide(location_worldwide_text, allow_single=True) or _is_explicit_worldwide(page_worldwide_text, allow_single=False)
+    explicit_worldwide = _is_explicit_worldwide(location_worldwide_text, allow_single=True) or _is_explicit_worldwide(
+        page_text, allow_single=False
+    )
 
-    stated_countries = _extract_stated_countries(
-        location_text, allowed_regions_text, evidence_seed, country_seed
-    )
-    # Prefer explicitly provided ISO country codes.
-    provided_countries: list[str] = []
-    if _to_iso(job.country) and _to_iso(job.country) not in provided_countries:
-        provided_countries.append(_to_iso(job.country))  # type: ignore[arg-type]
+    # Trusted structured applicant locations.
+    source_countries: list[str] = []
     for v in job.allowed_countries or []:
         iso = _to_iso(str(v))
-        if iso and iso not in provided_countries and iso != "WORLDWIDE":
-            provided_countries.append(iso)
-    for code in stated_countries:
-        if code not in provided_countries and code != "WORLDWIDE":
-            provided_countries.append(code)
+        if iso and iso not in source_countries:
+            source_countries.append(iso)
 
-    regions = _extract_regions(location_text, allowed_regions_text, evidence_seed)
+    # Explicit applicant wording means the location describes who may apply,
+    # not merely where the company or role is based.
+    applicant_markers = ("remote", "anywhere", "worldwide", "must be located", "must reside", "authorized to work", "eligible to work")
+    location_explicit_applicant = any(marker in folded_location for marker in applicant_markers)
 
-    if explicit_worldwide:
-        countries: list[str] = []
-        regions = []
-    elif regions and not provided_countries:
-        countries = []
-    elif provided_countries:
-        countries = provided_countries
-        # Do not downgrade a stated region to countries when both exist: region wins for scope only if country absent.
-        if regions and not stated_countries and not _to_iso(job.country) and not (job.allowed_countries or []):
-            countries = []
-    else:
-        countries = []
+    stated_countries: list[str] = []
+    # Structured fields are trusted applicant-location data even when the
+    # visible location is only a city/country.
+    for code in _extract_stated_countries(allowed_regions_text, evidence_seed, country_seed):
+        if code not in stated_countries:
+            stated_countries.append(code)
+    for code in source_countries:
+        if code not in stated_countries:
+            stated_countries.append(code)
+    if location_explicit_applicant:
+        for code in _extract_stated_countries(location_text):
+            if code not in stated_countries:
+                stated_countries.append(code)
 
-    # If both a region and countries are present in text, derive scope by which explicitly appears.
-    # Rule: region_restricted only when a region is stated and no country stated.
+    # Regions only when explicitly stated as EMEA/EU/MENA/LATAM/APAC/Africa/North America.
+    regions: list[str] = []
+    for region in _extract_regions(location_text, allowed_regions_text, evidence_seed):
+        if region not in regions:
+            regions.append(region)
+
+    location_country = _to_iso(location_text.split(",")[0].strip()) if location_text else None
+    if not location_country and location_text:
+        location_country = _to_iso(location_text)
+
+    structural_onsite = work_mode in {"onsite", "hybrid"}
+    page_onsite_markers = ("on-site", "onsite", "hybrid", "in office", "on site")
+    page_implies_onsite = any(marker in _fold(page_text) for marker in page_onsite_markers) and work_mode != "remote"
+
+    # Decide remote_scope.
     if explicit_worldwide:
         remote_scope = "worldwide"
-    elif regions and not stated_countries and not _to_iso(job.country) and not (job.allowed_countries or []):
+    elif regions:
         remote_scope = "region_restricted"
-    elif provided_countries and not (regions and not stated_countries and not _to_iso(job.country) and not (job.allowed_countries or [])) or provided_countries:
+    elif stated_countries:
+        remote_scope = "country_restricted"
+    elif structural_onsite or (page_implies_onsite and location_country):
+        remote_scope = "location_bound"
+    elif location_explicit_applicant and stated_countries:
         remote_scope = "country_restricted"
     else:
-        raw = _norm_remote_scope(job.remote_scope)
-        if raw == "worldwide":
-            raw = "unclear"
-        if raw == "country_restricted" and not provided_countries:
-            raw = "unclear"
-        if raw == "region_restricted" and not regions:
-            raw = "unclear"
-        remote_scope = raw
+        remote_scope = "unclear"
 
+    allowed_countries = list(stated_countries) if remote_scope in {"country_restricted", "region_restricted"} and remote_scope == "country_restricted" else []
+    if remote_scope == "country_restricted":
+        allowed_countries = list(stated_countries)
+    else:
+        allowed_countries = []
+
+    if remote_scope == "region_restricted":
+        allowed_regions_value = " / ".join(regions) if regions else None
+    elif remote_scope == "worldwide":
+        allowed_regions_value = (allowed_regions_text or None) if allowed_regions_text.lower() in {"worldwide"} else "Worldwide"
+        if not allowed_regions_value:
+            allowed_regions_value = "Worldwide"
+    else:
+        allowed_regions_value = None
+
+    # Dedupe region segments.
+    if allowed_regions_value and allowed_regions_value != "Worldwide":
+        segments = [seg.strip() for seg in allowed_regions_value.replace(" / ", ",").split(",")]
+        deduped = []
+        for seg in segments:
+            if seg and seg not in deduped:
+                deduped.append(seg)
+        allowed_regions_value = " / ".join(deduped) if deduped else None
+
+    # Country field: always ISO if location states one.
+    country_final = _to_iso(country_seed) or location_country
+    if remote_scope in {"country_restricted", "region_restricted"} and stated_countries:
+        country_final = stated_countries[0]
     if remote_scope == "worldwide":
-        countries = []
+        country_final = None
+    country_norm = _norm_country(country_final)
+
+    location_hint = None
+    if remote_scope == "unclear" and location_country:
+        location_hint = location_country
 
     company = (job.company or "").strip()
     source = (job.source or "").strip()
@@ -581,10 +694,8 @@ def normalize_job(job: Job) -> Job:
         "digital",
     }
     generic = company.lower() in generic_values or company.lower() == source.lower()
-    if not generic and source_host:
-        compact = company.lower().replace(" ", "")
-        if compact and " " not in company and company and company.lower() == source_host.split(".")[0]:
-                generic = True
+    if not generic and source_host and " " not in company and company and company.lower() == source_host.split(".")[0]:
+        generic = True
     if generic:
         company = "Unknown"
     confidence = job.confidence
@@ -592,68 +703,43 @@ def normalize_job(job: Job) -> Job:
         confidence = min(confidence if confidence is not None else 0.5, 0.4)
 
     auth_text = " / ".join(
-        str(v) for v in [job.work_authorization_required, job.page_text, job.location, job.description if hasattr(job, "description") else None] if v
+        str(v) for v in [job.work_authorization_required, page_text, location_text, evidence_seed] if v
     )
     authorization = (job.work_authorization_required or "").strip() or None
     if not authorization:
         authorization = extract_work_authorization(auth_text)
 
-    # Clean allowed_regions.
+    # Evidence: quoted/structured snippet, never bare ISO codes.
     if remote_scope == "worldwide":
-        allowed_regions_value = (allowed_regions_text or "").strip() or "Worldwide"
+        eligibility_evidence = evidence_seed or location_text or "Worldwide"
+        if eligibility_evidence.lower() not in text_all.lower():
+            eligibility_evidence = "Worldwide"
     elif remote_scope == "region_restricted":
-        allowed_regions_value = " / ".join(regions) if regions else (allowed_regions_text.strip() or None)
+        eligibility_evidence = allowed_regions_text or evidence_seed or location_text
+        if eligibility_evidence.lower() not in text_all.lower() and allowed_regions_text:
+            eligibility_evidence = allowed_regions_text
+    elif remote_scope == "country_restricted":
+        eligibility_evidence = location_text or evidence_seed or ", ".join(stated_countries)
+        # Keep exact location text; if sourcing from structured field, keep field/value style.
+        if job.allowed_countries and location_explicit_applicant is False and stated_countries == source_countries:
+            eligibility_evidence = f"applicantLocationRequirements: {', '.join(stated_countries)}"
+        if len(eligibility_evidence) > 200:
+            eligibility_evidence = eligibility_evidence[:200].rstrip()
+    elif remote_scope == "location_bound":
+        eligibility_evidence = location_text or evidence_seed
+        if len(eligibility_evidence) > 200:
+            eligibility_evidence = eligibility_evidence[:200].rstrip()
     else:
-        allowed_regions_value = None
-    # Remove duplicated segments.
-    if allowed_regions_value:
-        segments = [s.strip() for s in allowed_regions_value.replace(" / ", ",").split(",")]
-        deduped_segments: list[str] = []
-        for seg in segments:
-            if seg and seg not in deduped_segments:
-                deduped_segments.append(seg)
-        allowed_regions_value = " / ".join(deduped_segments) if deduped_segments else None
-        if allowed_regions_value == "Worldwide":
-            allowed_regions_value = "Worldwide"
+        eligibility_evidence = evidence_seed or None
 
-    eligibility_evidence = (job.eligibility_evidence or "").strip() or None
-    if not eligibility_evidence:
-        if explicit_worldwide:
-            eligibility_evidence = "worldwide"
-        elif remote_scope == "region_restricted" and regions:
-            eligibility_evidence = " / ".join(regions)
-        elif remote_scope == "country_restricted" and countries:
-            eligibility_evidence = ", ".join(countries)
-        elif remote_scope == "country_restricted" and provided_countries:
-            eligibility_evidence = ", ".join(provided_countries)
-        elif remote_scope != "unclear" and location_text.strip():
-            eligibility_evidence = location_text.strip()
-    if remote_scope != "unclear" and provided_countries and not eligibility_evidence:
-        eligibility_evidence = ", ".join(provided_countries)
-    if remote_scope != "unclear" and not eligibility_evidence and regions:
-        eligibility_evidence = " / ".join(regions)
+    if remote_scope == "unclear":
+        eligibility_evidence = None
+    if remote_scope != "unclear" and not eligibility_evidence and location_text:
+        eligibility_evidence = location_text[:200].rstrip()
     if remote_scope != "unclear" and not eligibility_evidence:
         remote_scope = "unclear"
-
-    # Final safety: never widen to worldwide without explicit support.
-    if remote_scope == "worldwide" and not explicit_worldwide:
-        remote_scope = "unclear"
-        if not regions and not provided_countries:
-            eligibility_evidence = None
-
-    # Country field: first stated country for country restrictions, unspecified otherwise.
-    first_country = countries[0] if countries else provided_countries[0] if provided_countries else None
-    # Do not store WORLDWIDE in country.
-    if first_country == "WORLDWIDE":
-        first_country = None
-    country_final = first_country if first_country else job.country
-    country_norm = _norm_country(country_final)
-
-    cleaned_countries = _clean_list(countries if countries else (provided_countries if remote_scope == "country_restricted" else []))
-    if remote_scope != "country_restricted":
-        cleaned_countries = [] if remote_scope == "worldwide" else cleaned_countries
-    if remote_scope == "region_restricted":
-        cleaned_countries = []
+        location_hint = location_country
+        eligibility_evidence = None
 
     if remote_scope == "worldwide":
         job = job.model_copy(update={"allowed_countries": []})
@@ -667,7 +753,8 @@ def normalize_job(job: Job) -> Job:
             "location": _clean_location(job.location),
             "country": country_norm,
             "remote_scope": remote_scope,
-            "allowed_countries": _clean_list(cleaned_countries) if remote_scope != "worldwide" else [],
+            "location_hint": location_hint,
+            "allowed_countries": _clean_list(allowed_countries) if remote_scope != "worldwide" else [],
             "allowed_regions": allowed_regions_value,
             "timezone_restriction": (job.timezone_restriction or "").strip() or None,
             "work_authorization_required": authorization,
@@ -678,8 +765,6 @@ def normalize_job(job: Job) -> Job:
             "page_type": job.page_type,
         }
     )
-
-
 def mark_freshness(
     jobs: list[Job],
     max_age_days: int = 60,

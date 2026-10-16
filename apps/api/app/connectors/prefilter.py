@@ -17,6 +17,9 @@ _ADJACENT_TITLE_TERMS = {
     "deep learning",
     "data engineer",
     "platform engineer",
+    "software engineer",
+    "developer",
+    "engineer",
 }
 
 

@@ -134,6 +134,7 @@ class Job(BaseModel):
     timezone_restriction: str | None = None
     work_authorization_required: str | None = None
     eligibility_evidence: str | None = None
+    location_hint: str | None = None
     seniority: str | None = None
     seniority_level: str | None = None
     original_url: str | None = None

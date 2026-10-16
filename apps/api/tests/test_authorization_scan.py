@@ -12,3 +12,21 @@ def test_authorization_scan_multilingual():
 
 def test_no_invented_authorization():
     assert scan_authorization_text("Remote software engineer role") == []
+
+
+def test_authorization_boilerplate_fixture_has_no_requirement():
+    from pathlib import Path
+    text = Path("tests/fixtures/auth_boilerplate.txt").read_text()
+    from app.normalize.normalizer import scan_authorization_requirements
+    assert scan_authorization_requirements(text) == []
+
+
+def test_authorization_requirement_fixture_returns_sentence():
+    from pathlib import Path
+    text = Path("tests/fixtures/auth_requirement.txt").read_text()
+    from app.normalize.normalizer import extract_work_authorization, scan_authorization_requirements
+    matches = scan_authorization_requirements(text)
+    assert matches
+    value = extract_work_authorization(text)
+    assert "authorized to work" in (value or "").lower()
+    assert "security clearance" in (value or "").lower()
