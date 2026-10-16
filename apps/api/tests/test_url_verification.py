@@ -89,3 +89,106 @@ def test_verify_drops_closed_page(monkeypatch):
     verified, statuses = asyncio.run(url_verification.verify_jobs([job]))
     assert verified == []
     assert statuses == {"closed_or_expired;dropped_unverified_url": 1}
+
+def test_verify_greenhouse_not_found_page_is_dropped(monkeypatch):
+    import asyncio
+
+    from app.core.models import Job
+    from app.discovery.fetcher import FetchResult
+    from app.extraction import url_verification
+
+    job = Job(title="Engineer", company="Company", url="https://boards.greenhouse.io/co/jobs/1", source="greenhouse.io/co")
+
+    async def fake_fetch_detailed(url, timeout=30, cache_dir="./.cache"):
+        return FetchResult(
+            url=url,
+            status="ok",
+            html="<html><body>Job not found</body></html>",
+            final_url=url,
+        )
+
+    monkeypatch.setattr(url_verification, "fetch_detailed", fake_fetch_detailed)
+
+    verified, statuses = asyncio.run(url_verification.verify_jobs([job]))
+    assert verified == []
+    assert statuses == {"not_found;dropped_unverified_url": 1}
+
+
+def test_verify_redirect_to_board_root_is_dropped(monkeypatch):
+    import asyncio
+
+    from app.core.models import Job
+    from app.discovery.fetcher import FetchResult
+    from app.extraction import url_verification
+
+    job = Job(title="Engineer", company="Company", url="https://boards.greenhouse.io/co/jobs/1", source="greenhouse.io/co")
+
+    async def fake_fetch_detailed(url, timeout=30, cache_dir="./.cache"):
+        return FetchResult(
+            url=url,
+            status="ok",
+            html="<html><body><h1>Jobs</h1></body></html>",
+            final_url="https://boards.greenhouse.io/co",
+        )
+
+    async def fake_classify_page(html, url, provider=None):
+        return "listing"
+
+    monkeypatch.setattr(url_verification, "fetch_detailed", fake_fetch_detailed)
+    monkeypatch.setattr(url_verification, "classify_page", fake_classify_page)
+
+    verified, statuses = asyncio.run(url_verification.verify_jobs([job]))
+    assert verified == []
+    assert statuses == {"redirected_to_board_root;dropped_unverified_url": 1}
+
+
+def test_verify_http_200_error_page_is_dropped(monkeypatch):
+    import asyncio
+
+    from app.core.models import Job
+    from app.discovery.fetcher import FetchResult
+    from app.extraction import url_verification
+
+    job = Job(title="Engineer", company="Company", url="https://example.com/jobs/1", source="example.com")
+
+    async def fake_fetch_detailed(url, timeout=30, cache_dir="./.cache"):
+        return FetchResult(
+            url=url,
+            status="ok",
+            html="<html><body>Something went wrong, please try again.</body></html>",
+            final_url=url,
+        )
+
+    monkeypatch.setattr(url_verification, "fetch_detailed", fake_fetch_detailed)
+
+    verified, statuses = asyncio.run(url_verification.verify_jobs([job]))
+    assert verified == []
+    assert statuses == {"http_200_error_page;dropped_unverified_url": 1}
+
+
+def test_verify_content_mismatch_drops_job(monkeypatch):
+    import asyncio
+
+    from app.core.models import Job
+    from app.discovery.fetcher import FetchResult
+    from app.extraction import url_verification
+
+    job = Job(title="Engineer", company="Acme", url="https://example.com/jobs/1", source="example.com")
+
+    async def fake_fetch_detailed(url, timeout=30, cache_dir="./.cache"):
+        return FetchResult(
+            url=url,
+            status="ok",
+            html="<html><body><h1>Other Role</h1><p>Different Company</p></body></html>",
+            final_url=url,
+        )
+
+    async def fake_classify_page(html, url, provider=None):
+        return "single_job"
+
+    monkeypatch.setattr(url_verification, "fetch_detailed", fake_fetch_detailed)
+    monkeypatch.setattr(url_verification, "classify_page", fake_classify_page)
+
+    verified, statuses = asyncio.run(url_verification.verify_jobs([job]))
+    assert verified == []
+    assert "content_mismatch" in next(iter(statuses))

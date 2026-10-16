@@ -1,6 +1,7 @@
 """Build targeted search queries from a Profile + Preferences."""
 
 import re
+import unicodedata
 from dataclasses import dataclass
 
 _EXCLUDED_ROLE_TERMS = ("founder", "co-founder", "owner", "ownership")
@@ -25,6 +26,43 @@ class SearchQuery:
     kind: str
 
 
+
+_ROLE_RULES = (
+    ("full stack", "Full-Stack Developer"),
+    ("fullstack", "Full-Stack Developer"),
+    ("full-stack", "Full-Stack Developer"),
+    ("back end", "Backend Developer"),
+    ("backend", "Backend Developer"),
+    ("back-end", "Backend Developer"),
+    ("front end", "Frontend Developer"),
+    ("frontend", "Frontend Developer"),
+    ("front-end", "Frontend Developer"),
+    ("machine learning", "Machine Learning Engineer"),
+    ("ml engineer", "Machine Learning Engineer"),
+    ("artificial intelligence", "AI Engineer"),
+    ("ai engineer", "AI Engineer"),
+    ("software engineer", "Software Engineer"),
+    ("software developer", "Software Engineer"),
+    ("developer", "Software Engineer"),
+    ("engineer", "Software Engineer"),
+    ("intern", None),
+    ("stage", None),
+    ("stagiaire", None),
+)
+
+
+def _fold(value: str) -> str:
+    return unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii").lower()
+
+
+def canonical_role(value: str) -> str | None:
+    folded = _fold(value)
+    for needle, canonical in _ROLE_RULES:
+        if needle in folded:
+            return canonical
+    return None
+
+
 def _listify(value) -> list[str]:
     if value is None:
         return []
@@ -33,13 +71,44 @@ def _listify(value) -> list[str]:
     return [str(v).strip() for v in value if str(v).strip()]
 
 
-def target_terms(profile) -> list[str]:
-    roles = [r.strip() for r in _listify(getattr(profile, "job_titles", []) if not hasattr(profile, "job_titles") or not isinstance(profile.job_titles, str) else profile.job_titles.split(","))]
-    roles = [r for r in roles if not any(term in r.lower() for term in _EXCLUDED_ROLE_TERMS)]
-    if roles:
-        return roles
+def target_terms(profile, preferences=None) -> list[str]:
+    raw_roles = getattr(profile, "job_titles", [])
+    if isinstance(raw_roles, str):
+        raw_roles = raw_roles.split(",")
+    canonical: list[str] = []
+    for role in raw_roles or []:
+        role = str(role).strip()
+        if not role:
+            continue
+        if any(term in _fold(role) for term in _EXCLUDED_ROLE_TERMS):
+            continue
+        mapped = canonical_role(role)
+        if mapped is None:
+            continue
+        # Drop internship roles unless the user explicitly asked for internships.
+        internship_requested = False
+        if preferences is not None:
+            employment_types = getattr(preferences, "employment_types", None) or []
+            values = [str(v.value if hasattr(v, "value") else v).lower() for v in employment_types]
+            internship_requested = "internship" in values
+        if mapped and any(term in _fold(role) for term in ("intern", "stage", "stagiaire")) and not internship_requested:
+            continue
+        if mapped and mapped not in canonical:
+            canonical.append(mapped)
+    roles = canonical[:3] if canonical else []
+    if not roles:
+        skills = _listify(getattr(profile, "skills", []))
+        roles = skills[:2]
+    return roles
+
+
+def target_prefilter_terms(profile, preferences=None) -> list[str]:
+    roles = target_terms(profile, preferences=preferences)
     skills = _listify(getattr(profile, "skills", []))
-    return skills[:2]
+    for skill in skills[:4]:
+        if skill not in roles:
+            roles.append(skill)
+    return roles[:8]
 
 
 def _exclude_terms(exclude_terms: list[str] | None) -> list[str]:
@@ -123,7 +192,7 @@ def generate_queries_with_metadata(
     seniority_override: str | None = None,
     exclude_terms: list[str] | None = None,
 ) -> list[SearchQuery]:
-    primary = target_terms(profile)
+    primary = target_terms(profile, preferences=preferences)
     skill_terms = _listify(getattr(profile, "skills", []))
     modes = _modes(preferences)
     types = _employment_types(preferences)

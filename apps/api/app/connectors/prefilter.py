@@ -22,27 +22,23 @@ def _role_aliases(role: str) -> list[str]:
 
 
 def matches_role(title: str, tags: list[str] | None = None, roles: list[str] | None = None) -> bool:
-    """Keep a raw feed item only when its title matches a target role."""
+    """Keep a raw feed item when its title or tags contain a target role/skill phrase."""
     if not roles:
         return True
 
     title_norm = _norm(title)
     title_tokens = set(title_norm.split())
+    tag_text = _norm(" ".join(tags or []))
 
     for role in roles:
         for alias in _role_aliases(role):
             if not alias:
                 continue
-            if alias in title_norm or set(alias.split()).issubset(title_tokens):
+            if alias in title_norm:
                 return True
-
-    # Tags are only a secondary signal, and only when the job already looks
-    # like an engineering/software role.
-    title_role_tokens = {"developer", "engineer", "programmer", "architect", "engineering"}
-    if title_tokens & title_role_tokens:
-        tag_text = _norm(" ".join(tags or []))
-        for role in roles:
-            for alias in _role_aliases(role):
-                if alias and alias in tag_text:
-                    return True
+            alias_tokens = set(alias.split())
+            if alias_tokens and alias_tokens.issubset(title_tokens):
+                return True
+            if alias in tag_text and title_tokens & {"developer", "engineer", "programmer", "architect", "scientist", "analyst"}:
+                return True
     return False
