@@ -2,7 +2,7 @@
 name = "jobpilot-api"
 version = "0.1.0"
 description = "JobPilot FastAPI backend"
-requires-python = ">=3.11"
+requires-python = ">=3.13,<3.14"
 dependencies = [
   "fastapi",
   "uvicorn[standard]",
@@ -10,6 +10,7 @@ dependencies = [
   "pydantic-settings",
   "python-multipart",
   "httpx",
+  "extruct",
 ]
 
 [project.optional-dependencies]
@@ -26,7 +27,6 @@ cv = [
 ]
 discovery = [
   "trafilatura",
-  "extruct",
   "selectolax",
   "beautifulsoup4",
   "playwright",
@@ -49,7 +49,10 @@ ollama = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py313"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+markers = ["live: requires network and real provider keys"]
+addopts = "-m 'not live'"
+

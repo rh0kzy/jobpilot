@@ -2,6 +2,8 @@
 
 **Open source, self-hosted AI job finder.** Upload your CV, choose your preferences, get the best-matching jobs from around the world. Free, private — bring your own AI key.
 
+Backend requires **Python 3.13.x**.
+
 ## How it works (7-step pipeline)
 
 1. Upload your CV (PDF/DOCX) and set preferences (work mode, employment type, country or worldwide).
