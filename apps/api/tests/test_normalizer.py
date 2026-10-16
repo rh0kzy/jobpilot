@@ -13,9 +13,9 @@ def test_normalize_validates_and_leaves_unspecified():
         page_text="Full-time, remote role. CDI.",
     )
     normalized = normalize_job(job)
-    assert normalized.work_mode is None
-    assert normalized.employment_type is None
-    assert normalized.country is None
+    assert normalized.work_mode == "unspecified"
+    assert normalized.employment_type == "unspecified"
+    assert normalized.country == "unspecified"
 
 
 def test_normalize_keeps_explicit_values():

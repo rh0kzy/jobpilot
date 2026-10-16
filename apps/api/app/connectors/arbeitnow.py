@@ -55,7 +55,7 @@ async def fetch_jobs(
                 if isinstance(item.get("job_types"), list)
                 else item.get("job_types"),
                 location=item.get("location"),
-                remote_eligibility=item.get("location") if item.get("remote") else None,
+                allowed_regions=item.get("location") if item.get("remote") else None,
                 seniority=_extract_seniority(title),
                 country=None,
                 page_text=item.get("description", ""),

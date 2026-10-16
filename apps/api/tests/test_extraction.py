@@ -31,7 +31,7 @@ async def test_jsonld_extraction_minimal_fixture():
     assert job.location == "Berlin, DE"
     assert job.work_mode == "remote"
     assert job.employment_type == "full_time"
-    assert job.remote_eligibility == "US"
+    assert job.allowed_countries == ["US"]
     assert job.seniority == "Senior"
     assert job.url == url
     assert job.original_url == url

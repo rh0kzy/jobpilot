@@ -51,7 +51,7 @@ async def fetch_jobs(
                 work_mode="remote",
                 employment_type=None,
                 location=item.get("location"),
-                remote_eligibility=item.get("location"),
+                allowed_regions=item.get("location"),
                 seniority=_extract_seniority(title),
                 country=None,
                 page_text=item.get("description", ""),

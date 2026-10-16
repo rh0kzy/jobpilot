@@ -10,6 +10,7 @@ class WorkMode(str, Enum):
     remote = "remote"
     hybrid = "hybrid"
     onsite = "onsite"
+    unspecified = "unspecified"
 
 
 class EmploymentType(str, Enum):
@@ -17,6 +18,7 @@ class EmploymentType(str, Enum):
     part_time = "part_time"
     contract = "contract"
     internship = "internship"
+    unspecified = "unspecified"
 
 
 class Education(BaseModel):
@@ -44,6 +46,8 @@ class Preferences(BaseModel):
     employment_types: list[EmploymentType] = Field(default_factory=list)
     countries: list[str] = Field(default_factory=list)
     seniority_override: str | None = None
+    residence_country: str | None = None
+    authorized_countries: list[str] = Field(default_factory=list)
 
     @field_validator("countries", mode="before")
     @classmethod
@@ -52,10 +56,37 @@ class Preferences(BaseModel):
             return []
         return [str(v).strip().upper() for v in value]
 
+    @field_validator("residence_country", mode="before")
+    @classmethod
+    def _normalize_residence(cls, value):
+        if value is None:
+            return None
+        value = str(value).strip().upper()
+        if value == "":
+            return None
+        if value == "WORLDWIDE":
+            return value
+        if len(value) != 2 or not value.isalpha():
+            raise ValueError(f"Invalid residence country code: {value}")
+        return value
+
+    @field_validator("authorized_countries", mode="before")
+    @classmethod
+    def _normalize_authorized(cls, value):
+        if value is None:
+            return []
+        out = []
+        for v in value:
+            code = str(v).strip().upper()
+            if code == "":
+                continue
+            out.append(code)
+        return out
+
     @staticmethod
     def _valid_country(value: str) -> bool:
         value = value.strip().upper()
-        if value == "WORLDWIDE":
+        if value in {"WORLDWIDE", "UNSPECIFIED"}:
             return True
         return len(value) == 2 and value.isalpha()
 
@@ -63,6 +94,28 @@ class Preferences(BaseModel):
         for c in self.countries:
             if not self._valid_country(c):
                 raise ValueError(f"Invalid country code: {c}")
+        for c in self.authorized_countries:
+            if not self._valid_country(c):
+                raise ValueError(f"Invalid authorized country code: {c}")
+        if not self.authorized_countries and self.residence_country is not None:
+            self.authorized_countries = [self.residence_country]
+
+    # Compatibility aliases for alternate naming used in prompts/tests.
+    @property
+    def country_of_residence(self) -> str | None:
+        return self.residence_country
+
+    @property
+    def work_authorization_countries(self) -> list[str]:
+        return self.authorized_countries
+
+    @property
+    def work_countries(self) -> list[str]:
+        return self.authorized_countries
+
+    @property
+    def authorized_locations(self) -> list[str]:
+        return self.authorized_countries
 
 
 class Job(BaseModel):
@@ -75,13 +128,24 @@ class Job(BaseModel):
     employment_type: str | None = None
     location: str | None = None
     country: str | None = None
-    remote_eligibility: str | None = None
+    remote_scope: str | None = None
+    allowed_countries: list[str] = Field(default_factory=list)
+    allowed_regions: str | None = None
+    timezone_restriction: str | None = None
+    work_authorization_required: str | None = None
+    eligibility_evidence: str | None = None
     seniority: str | None = None
+    seniority_level: str | None = None
     original_url: str | None = None
     url_verified: bool = False
     url_verification_status: str | None = None
     freshness_status: str | None = None
     page_text: str = ""
+
+    # Compatibility alias removed field name from Phase 1; keep reads from old fixtures returning None.
+    @property
+    def remote_eligibility(self) -> str | None:
+        return None
 
 
 class SearchResult(BaseModel):

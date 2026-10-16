@@ -10,7 +10,7 @@ import httpx
 from app.connectors.prefilter import matches_role
 from app.core.models import Job
 from app.extraction.classification import _url_is_single_job
-from app.extraction.extractor import _extract_remote_eligibility, _extract_seniority
+from app.extraction.extractor import _extract_applicant_locations, _extract_seniority
 
 
 def _location_name(value) -> str | None:
@@ -20,6 +20,7 @@ def _location_name(value) -> str | None:
         return None
     return str(value).strip() or None
 
+
 _BOARDS_FILE = Path(__file__).with_name("greenhouse_boards.txt")
 _BASE_URL = "https://boards-api.greenhouse.io/v1/boards"
 
@@ -27,7 +28,11 @@ _BASE_URL = "https://boards-api.greenhouse.io/v1/boards"
 def _load_board_tokens() -> list[str]:
     if not _BOARDS_FILE.exists():
         return []
-    return [line.strip() for line in _BOARDS_FILE.read_text(encoding="utf-8").splitlines() if line.strip()]
+    return [
+        line.strip()
+        for line in _BOARDS_FILE.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
 
 
 def _company_from_token(token: str) -> str:
@@ -81,9 +86,10 @@ async def fetch_jobs(
                         work_mode=None,
                         employment_type=None,
                         location=location,
-                        remote_eligibility=_extract_remote_eligibility(
-                            {"title": title, "description": text}
-                        ),
+                        allowed_regions=" / ".join(
+                            _extract_applicant_locations({"title": title, "description": text})
+                        )
+                        or None,
                         seniority=_extract_seniority(title),
                         country=None,
                         page_text=text,

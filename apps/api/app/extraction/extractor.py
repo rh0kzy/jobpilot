@@ -140,12 +140,21 @@ def _extract_country_from_item(item: dict) -> str | None:
     return None
 
 
-def _extract_remote_eligibility(item: dict) -> str | None:
+def _is_iso_country(value: str) -> bool:
+    value = (value or "").strip().upper()
+    return len(value) == 2 and value.isalpha()
+
+
+def _extract_applicant_locations(item: dict) -> list[str]:
     raw = item.get("applicantLocationRequirements")
     values: list[str] = []
     if isinstance(raw, dict):
         address = raw.get("address", {}) if isinstance(raw.get("address"), dict) else {}
-        for value in [address.get("addressCountry"), address.get("addressLocality"), raw.get("name")]:
+        for value in [
+            address.get("addressCountry"),
+            address.get("addressLocality"),
+            raw.get("name"),
+        ]:
             cleaned = _clean(value)
             if cleaned and cleaned not in values:
                 values.append(cleaned)
@@ -153,18 +162,22 @@ def _extract_remote_eligibility(item: dict) -> str | None:
         for entry in raw:
             if isinstance(entry, dict):
                 address = entry.get("address", {}) if isinstance(entry.get("address"), dict) else {}
-                cleaned = _clean(address.get("addressCountry") or address.get("addressLocality") or entry.get("name"))
+                cleaned = _clean(
+                    address.get("addressCountry")
+                    or address.get("addressLocality")
+                    or entry.get("name")
+                )
                 if cleaned and cleaned not in values:
                     values.append(cleaned)
     if values:
-        return " / ".join(values)
+        return values
 
     text = f"{item.get('title', '')} {item.get('description', '')}"
     for term in _REMOTE_ELIGIBLE_TERMS:
         pattern = rf"\b{re.escape(term)}\b[^\n.]{{0,30}}\b(only|based|remote|residents?)\b"
         if re.search(pattern, text, flags=re.IGNORECASE):
-            return term
-    return None
+            return [term]
+    return []
 
 
 def _extract_seniority(*texts: str | None) -> str | None:
@@ -201,6 +214,13 @@ def _from_jsonld(html: str, url: str) -> list[Job]:
             if not title or not url:
                 continue
             description = item.get("description", "") or ""
+            applicant_locations = _extract_applicant_locations(item)
+            allowed_countries = [v for v in applicant_locations if _is_iso_country(v)]
+            allowed_regions_text = " / ".join(
+                v for v in applicant_locations if not _is_iso_country(v)
+            )
+            if not allowed_regions_text and applicant_locations and not allowed_countries:
+                allowed_regions_text = " / ".join(applicant_locations)
             jobs.append(
                 Job(
                     title=title,
@@ -213,8 +233,13 @@ def _from_jsonld(html: str, url: str) -> list[Job]:
                     employment_type=_extract_employment(item),
                     location=_extract_location(item),
                     country=_extract_country_from_item(item),
-                    remote_eligibility=_extract_remote_eligibility(item),
+                    allowed_countries=allowed_countries,
+                    allowed_regions=allowed_regions_text or None,
+                    eligibility_evidence=" / ".join(applicant_locations)
+                    if applicant_locations
+                    else None,
                     seniority=_extract_seniority(title),
+                    seniority_level=None,
                     page_text=description,
                 )
             )
@@ -246,10 +271,10 @@ async def extract_jobs(html: str, url: str, provider=None, max_chars: int = 8000
 
     prompt = (
         "Extract at most one job posting from the following visible page text. "
-        "If this page is not one specific job posting, return {\"jobs\":[]}. "
+        'If this page is not one specific job posting, return {"jobs":[]}. '
         "Copy fields only; do not invent values. Use the given URL exactly. "
         "Return ONLY JSON with: jobs[{title, company, url, posted_date, work_mode, employment_type, "
-        "location, country, remote_eligibility, seniority, description}].\n\n"
+        "location, country, remote_scope, allowed_countries, allowed_regions, timezone_restriction, work_authorization_required, eligibility_evidence, seniority, seniority_level, description}].\n\n"
         f"URL: {url}\n\nTEXT:\n{text[:max_chars]}"
     )
     try:
@@ -276,8 +301,18 @@ async def extract_jobs(html: str, url: str, provider=None, max_chars: int = 8000
                     employment_type=_norm_employment(item.get("employment_type")),
                     location=_clean(item.get("location")),
                     country=_extract_country(item.get("country")),
-                    remote_eligibility=_clean(item.get("remote_eligibility")),
-                    seniority=_extract_seniority(title),
+                    remote_scope=_clean(item.get("remote_scope")),
+                    allowed_countries=[
+                        str(v).strip().upper()
+                        for v in (item.get("allowed_countries") or [])
+                        if str(v).strip()
+                    ],
+                    allowed_regions=_clean(item.get("allowed_regions")),
+                    timezone_restriction=_clean(item.get("timezone_restriction")),
+                    work_authorization_required=_clean(item.get("work_authorization_required")),
+                    eligibility_evidence=_clean(item.get("eligibility_evidence")),
+                    seniority=_extract_seniority(title, item.get("seniority")),
+                    seniority_level=_clean(item.get("seniority_level")),
                     page_text=item.get("description", "") or "",
                 )
             )
